@@ -3,13 +3,15 @@ export default {
   photoSeconds: 4,      // durasi tiap foto
   fadeSeconds: 0.5,     // crossfade antar foto
   fps: 25,
-  logo: { src: '/logo.png', widthPct: 0.42, xPct: 0.05, yPct: 0.045 }, // relatif ke lebar/tinggi video
+  zoomAmount: 0.12,     // seberapa dekat zoom in/out (0.12 = 12%)
+  panAmount: 0.18,      // seberapa jauh geser kanan/kiri
+  logo: { src: '/logo.png', widthPct: 0.26, yPct: 0.05 },   // logo di tengah atas
   subtitle: {
-    font: '700 {size}px Montserrat',
-    sizePct: 0.046,     // x lebar video (1080 -> ~50px)
-    color: '#ffffff',
-    box: 'rgba(0,0,0,0.65)',
-    maxCharsPerCue: 64, // dipakai saat teks ditempel (tanpa SRT)
+    font: 'italic 600 {size}px Montserrat',
+    sizePct: 0.042,     // x lebar video
+    color: '#161616',
+    box: '#ffffff',
+    maxCharsPerCue: 60, // dipakai saat teks ditempel (tanpa SRT)
     bottomPct: 0.80,    // posisi bawah kotak subtitle (0-1 dari tinggi)
   },
 };

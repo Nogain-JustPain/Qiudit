@@ -1,13 +1,19 @@
+import '@fontsource/montserrat/400.css';
+import '@fontsource/montserrat/500.css';
+import '@fontsource/montserrat/600.css';
+import '@fontsource/montserrat/600-italic.css';
 import '@fontsource/montserrat/700.css';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import CFG from './config.js';
+import { buildArgs } from './ffgraph.js';
 
 const $ = (id) => document.getElementById(id);
 const ffmpeg = new FFmpeg();
 let loaded = false;
 const status = (t) => ($('status').textContent = t);
 const progress = (v) => { $('bar').hidden = false; $('bar').value = v; };
+const subFont = (size) => CFG.subtitle.font.replace('{size}', size);
 
 // ---------- subtitle: SRT atau teks biasa ----------
 const ts = (s) => {
@@ -22,19 +28,43 @@ function parseSrt(t) {
     return { start: ts(a), end: ts(c), text: l.slice(i + 1).join(' ').replace(/<[^>]+>/g, '').trim() };
   }).filter((c) => c && c.text);
 }
-function cuesFromText(text, total) {
-  const max = CFG.subtitle.maxCharsPerCue;
-  const parts = [];
-  for (const s of text.replace(/\s+/g, ' ').trim().match(/[^.!?]+[.!?]*/g) || []) {
-    let cur = '';
-    for (const w of s.trim().split(' ')) {
-      if ((cur + ' ' + w).trim().length > max && cur) { parts.push(cur); cur = w; } else cur = (cur + ' ' + w).trim();
+// Timing dibagi di rentang suara saja (jeda awal/akhir VO diabaikan),
+// dan kalimat yang berakhir titik/koma dapat bobot jeda tambahan.
+function cuesFromText(text, s, e) {
+  const max = CFG.subtitle.maxCharsPerCue, parts = [];
+  for (const para of text.split(/\n+/).map((x) => x.trim()).filter(Boolean))
+    for (const sent of para.match(/[^.!?]+[.!?]*/g) || []) {
+      let cur = '';
+      for (const w of sent.trim().split(/\s+/)) {
+        if (cur && (cur + ' ' + w).length > max) { parts.push(cur); cur = ''; }
+        cur = cur ? cur + ' ' + w : w;
+      }
+      if (cur) parts.push(cur);
     }
-    if (cur) parts.push(cur);
-  }
-  const sum = parts.reduce((a, p) => a + p.length, 0) || 1;
-  let t = 0;
-  return parts.map((p) => { const d = (p.length / sum) * total; const c = { start: t, end: t + d, text: p }; t += d; return c; });
+  const wt = parts.map((p) => p.length + (/[.!?]$/.test(p) ? 14 : /[,;:]$/.test(p) ? 7 : 0));
+  const sum = wt.reduce((a, b) => a + b, 0) || 1;
+  let t = s;
+  return parts.map((p, i) => { const d = ((e - s) * wt[i]) / sum; const c = { start: t, end: t + d, text: p }; t += d; return c; });
+}
+
+// ---------- audio ----------
+const audioDuration = (file) => new Promise((res, rej) => {
+  const a = new Audio(URL.createObjectURL(file));
+  a.onloadedmetadata = () => res(a.duration); a.onerror = () => rej(new Error('Voice over tidak bisa dibaca'));
+});
+async function speechBounds(file, T) {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const buf = await ctx.decodeAudioData(await file.arrayBuffer()); ctx.close();
+    const d = buf.getChannelData(0), win = Math.round(buf.sampleRate * 0.05);
+    let s = -1, e = 0;
+    for (let i = 0; i + win <= d.length; i += win) {
+      let sum = 0; for (let j = i; j < i + win; j++) sum += d[j] * d[j];
+      if (Math.sqrt(sum / win) > 0.015) { if (s < 0) s = i / buf.sampleRate; e = (i + win) / buf.sampleRate; }
+    }
+    if (s >= 0 && e - s > T * 0.5) return [Math.max(0, s - 0.05), Math.min(T, e)];
+  } catch { /* pakai seluruh durasi */ }
+  return [0, T];
 }
 
 // ---------- gambar via canvas ----------
@@ -43,41 +73,37 @@ async function photoToJpeg(file, W, H) {
   try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
   catch {
     try {
-      bmp = await new Promise((res, rej) => {
-        const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = URL.createObjectURL(file);
-      });
+      bmp = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = URL.createObjectURL(file); });
     } catch {
       throw new Error(`Foto "${file.name}" tidak bisa dibaca browser (format ${file.type || file.name.split('.').pop()}). Convert ke JPG/PNG dulu, HEIC dari iPhone tidak didukung.`);
     }
   }
+  const bw = bmp.naturalWidth || bmp.width, bh = bmp.naturalHeight || bmp.height;
   const c = new OffscreenCanvas(W, H); const x = c.getContext('2d');
-  const k = Math.max(W / (bmp.naturalWidth || bmp.width), H / (bmp.naturalHeight || bmp.height));
-  x.drawImage(bmp, (W - (bmp.naturalWidth || bmp.width) * k) / 2, (H - (bmp.naturalHeight || bmp.height) * k) / 2, (bmp.naturalWidth || bmp.width) * k, (bmp.naturalHeight || bmp.height) * k);
+  const k = Math.max(W / bw, H / bh);
+  x.drawImage(bmp, (W - bw * k) / 2, (H - bh * k) / 2, bw * k, bh * k);
   const blob = await c.convertToBlob({ type: 'image/jpeg', quality: 0.92 });
   return new Uint8Array(await blob.arrayBuffer());
 }
+// Kotak putih membulat, teks hitam miring
 async function cueToPng(text, W) {
-  const S = CFG.subtitle, size = Math.round(W * S.sizePct), pad = Math.round(size * 0.45);
-  const font = S.font.replace('{size}', size);
-  const probe = new OffscreenCanvas(10, 10).getContext('2d'); probe.font = font;
-  const limit = W * 0.86 - pad * 2, lines = []; let cur = '';
+  const S = CFG.subtitle, size = Math.round(W * S.sizePct);
+  const padX = Math.round(size * 0.55), padY = Math.round(size * 0.32), lh = Math.round(size * 1.3);
+  const probe = new OffscreenCanvas(10, 10).getContext('2d'); probe.font = subFont(size);
+  const limit = W * 0.86 - padX * 2, lines = []; let cur = '';
   for (const w of text.split(' ')) {
     const tryLine = cur ? cur + ' ' + w : w;
     if (probe.measureText(tryLine).width > limit && cur) { lines.push(cur); cur = w; } else cur = tryLine;
   }
   lines.push(cur);
-  const lh = Math.round(size * 1.3), boxW = Math.min(W * 0.92, Math.max(...lines.map((l) => probe.measureText(l).width)) + pad * 2);
-  const H = lines.length * lh + pad * 1.2;
-  const c = new OffscreenCanvas(W, Math.ceil(H)); const x = c.getContext('2d');
-  x.fillStyle = S.box; x.beginPath(); x.roundRect((W - boxW) / 2, 0, boxW, H, size * 0.25); x.fill();
-  x.font = font; x.fillStyle = S.color; x.textAlign = 'center'; x.textBaseline = 'middle';
-  lines.forEach((l, i) => x.fillText(l, W / 2, pad * 0.6 + lh * i + lh / 2));
+  const boxW = Math.ceil(Math.max(...lines.map((l) => probe.measureText(l).width)) + padX * 2);
+  const boxH = lines.length * lh + padY * 2;
+  const c = new OffscreenCanvas(W, boxH); const x = c.getContext('2d');
+  x.fillStyle = S.box; x.beginPath(); x.roundRect((W - boxW) / 2, 0, boxW, boxH, size * 0.28); x.fill();
+  x.font = subFont(size); x.fillStyle = S.color; x.textAlign = 'center'; x.textBaseline = 'middle';
+  lines.forEach((l, i) => x.fillText(l, W / 2, padY + lh * i + lh / 2));
   return new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer());
 }
-const audioDuration = (file) => new Promise((res, rej) => {
-  const a = new Audio(URL.createObjectURL(file));
-  a.onloadedmetadata = () => res(a.duration); a.onerror = () => rej(new Error('Voice over tidak bisa dibaca'));
-});
 
 // ---------- render ----------
 async function render() {
@@ -85,7 +111,8 @@ async function render() {
   if (!photos.length) return status('Upload minimal satu foto.');
   if (!vo) return status('Upload file voice over.');
   const W = $('res').value === '1080' ? 1080 : 720, H = Math.round((W * 16) / 9);
-  const D = Math.max(+$('dur').value || CFG.photoSeconds, CFG.fadeSeconds + 0.5), F = CFG.fadeSeconds;
+  const F = CFG.fadeSeconds, D = Math.max(+$('dur').value || CFG.photoSeconds, F + 0.5);
+  const shift = +$('shift').value || 0, motion = $('motion').value === 'on';
 
   if (!loaded) {
     status('Memuat ffmpeg (sekali saja, ~30 MB)...');
@@ -100,7 +127,7 @@ async function render() {
   progress(0.02); status('Menyiapkan foto...');
   const T = await audioDuration(vo);
   const n = Math.max(1, Math.ceil((T - F) / (D - F)));
-  await document.fonts.load(`700 ${Math.round(W * CFG.subtitle.sizePct)}px Montserrat`);
+  await document.fonts.load(subFont(Math.round(W * CFG.subtitle.sizePct)));
 
   for (let i = 0; i < photos.length; i++) await ffmpeg.writeFile(`p${i}.jpg`, await photoToJpeg(photos[i], W, H));
   const ext = (vo.name.split('.').pop() || 'mp3').toLowerCase();
@@ -108,41 +135,31 @@ async function render() {
   await ffmpeg.writeFile('logo.png', await fetchFile(CFG.logo.src));
 
   status('Menyiapkan subtitle...');
-  let cues = srt ? parseSrt(await srt.text()) : cuesFromText($('script').value, T);
+  let cues;
+  if (srt) cues = parseSrt(await srt.text());
+  else { const [s, e] = await speechBounds(vo, T); cues = cuesFromText($('script').value, s, e); }
+  cues = cues.map((c) => ({ ...c, start: Math.max(0, c.start + shift), end: Math.min(T, c.end + shift) })).filter((c) => c.end > c.start);
   for (let i = 0; i < cues.length; i++) await ffmpeg.writeFile(`s${i}.png`, await cueToPng(cues[i].text, W));
   progress(0.1);
 
-  // input: n klip foto | logo | subtitle | audio
-  const args = [];
-  for (let k = 0; k < n; k++) args.push('-loop', '1', '-framerate', String(CFG.fps), '-t', String(D), '-i', `p${k % photos.length}.jpg`);
-  args.push('-i', 'logo.png');
-  cues.forEach((_, i) => args.push('-i', `s${i}.png`));
-  args.push('-i', `vo.${ext}`);
-
-  const f = []; let cur = '[0:v]';
-  for (let k = 1; k < n; k++) { f.push(`${cur}[${k}:v]xfade=transition=fade:duration=${F}:offset=${(k * (D - F)).toFixed(3)}[x${k}]`); cur = `[x${k}]`; }
-  const L = CFG.logo;
-  f.push(`[${n}:v]scale=${Math.round(W * L.widthPct)}:-1[lg]`);
-  f.push(`${cur}[lg]overlay=x=${Math.round(W * L.xPct)}:y=${Math.round(H * L.yPct)}[v0]`); cur = '[v0]';
-  const yb = Math.round(H * CFG.subtitle.bottomPct);
-  cues.forEach((c, i) => {
-    f.push(`${cur}[${n + 1 + i}:v]overlay=x=0:y=${yb}-h:enable='between(t,${c.start.toFixed(3)},${c.end.toFixed(3)})'[o${i}]`); cur = `[o${i}]`;
-  });
-  f.push(`${cur}format=yuv420p[vout]`);
+  const args = buildArgs({ W, H, D, F, fps: CFG.fps, n, nPhotos: photos.length, cues, ext, T, logo: CFG.logo,
+    subBottomPct: CFG.subtitle.bottomPct, zoom: CFG.zoomAmount, pan: CFG.panAmount, motion });
 
   status('Merender video... (tab jangan ditutup)');
-  const code = await ffmpeg.exec([...args, '-filter_complex', f.join(';'), '-map', '[vout]', '-map', `${n + 1 + cues.length}:a`,
-    '-t', T.toFixed(3), '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '24', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', 'out.mp4']);
+  const code = await ffmpeg.exec(args);
   if (code !== 0) throw new Error('ffmpeg gagal (kode ' + code + '). Coba resolusi 720 atau kurangi jumlah foto.');
 
   const data = await ffmpeg.readFile('out.mp4');
   const url = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
-  $('out').innerHTML = `<video src="${url}" controls playsinline></video><br><a href="${url}" download="bali-express-video.mp4">Download MP4</a>`;
+  $('out').innerHTML = `<video src="${url}" controls playsinline></video><a href="${url}" download="bali-express-video.mp4">Download MP4</a>`;
   progress(1); status('Selesai.');
-  // bersihkan memori
   for (const name of (await ffmpeg.listDir('.')).map((e) => e.name)) if (/^(p|s)\d+\.(jpg|png)$/.test(name) || name === 'out.mp4') await ffmpeg.deleteFile(name);
 }
 
+// nama file terpilih
+for (const id of ['photos', 'vo', 'srt']) $(id).onchange = () => {
+  const f = [...$(id).files]; $(id + 'Name').textContent = !f.length ? 'Belum ada file' : f.length > 1 ? `${f.length} file dipilih` : f[0].name;
+};
 $('go').onclick = async () => {
   $('go').disabled = true; $('out').innerHTML = '';
   try { await render(); } catch (e) { console.error(e); status('Gagal: ' + (e && e.message ? e.message : String(e) || 'error tidak diketahui, buka Console (F12)')); }
