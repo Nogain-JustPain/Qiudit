@@ -200,3 +200,9 @@ $('go').onclick = async () => {
   try { await render(); } catch (e) { console.error(e); status('Gagal: ' + (e && e.message ? e.message : String(e) || 'error tidak diketahui, buka Console (F12)')); }
   $('go').disabled = false;
 };
+
+// jendela pengaturan
+const dlg = $('dlg');
+$('cfg').onclick = () => dlg.showModal();
+$('dlgClose').onclick = () => dlg.close();
+dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });

@@ -47,6 +47,16 @@ progress[hidden]{display:none}
 #dl{text-align:center}
 #dl a{display:inline-block;margin-top:10px;padding:11px 22px;border-radius:10px;background:var(--ink);color:var(--paper);font-weight:700;font-size:14px;text-decoration:none}
 #dl a:hover{background:#26211b}
+.actions{display:flex;gap:10px}
+button#cfg{flex:none;width:54px;border:1px solid var(--line);border-radius:12px;background:var(--paper);color:var(--ink);cursor:pointer;display:flex;align-items:center;justify-content:center}
+button#cfg:hover{background:var(--sand)}
+button#cfg:focus-visible,button#dlgClose:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+button#go{flex:1}
+dialog{border:1px solid var(--line);border-radius:18px;background:var(--paper);color:var(--ink);padding:0;width:min(520px,92vw);font-family:inherit}
+dialog::backdrop{background:rgba(59,52,43,.4)}
+.dlg-in{padding:22px 22px 24px}
+button#dlgClose{margin-top:18px;width:100%;padding:13px;border:0;border-radius:12px;background:var(--ink);color:var(--paper);font:700 15px Montserrat,sans-serif;cursor:pointer}
+button#dlgClose:hover{background:#26211b}
 </style>
 </head>
 <body>
@@ -73,7 +83,25 @@ progress[hidden]{display:none}
       <textarea id="script" placeholder="Tempel naskah di sini. Timing subtitle dibagi mengikuti suara VO."></textarea></label>
   </section>
 
-  <section class="card">
+
+  <div class="actions">
+    <button id="cfg" type="button" aria-label="Pengaturan" title="Pengaturan">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+    <button id="go">Render video</button>
+  </div>
+</div>
+
+<aside class="stage">
+  <div class="screen"><div id="out"></div><div class="empty">Hasil video muncul di sini setelah dirender.</div></div>
+  <progress id="bar" value="0" max="1" hidden></progress>
+  <div id="status"></div>
+  <div id="dl"></div>
+</aside>
+</div>
+</main>
+<dialog id="dlg">
+  <div class="dlg-in">
     <h2>Pengaturan</h2>
     <div class="grid">
       <label class="field"><span>Resolusi</span>
@@ -87,20 +115,10 @@ progress[hidden]{display:none}
       <label class="field"><span>Ukuran subtitle</span><input id="subsize" type="number" min="16" max="80" step="1" value="32"></label>
       <label class="field"><span>Volume musik <small>(%)</small></span><input id="bgmvol" type="number" min="0" max="100" step="5" value="15"></label>
     </div>
-    <p class="hint" style="margin-top:12px">Subtitle terasa kecepatan? Isi angka plus supaya muncul lebih lambat, misalnya 0,5.</p>
-  </section>
-
-  <button id="go">Render video</button>
-</div>
-
-<aside class="stage">
-  <div class="screen"><div id="out"></div><div class="empty">Hasil video muncul di sini setelah dirender.</div></div>
-  <progress id="bar" value="0" max="1" hidden></progress>
-  <div id="status"></div>
-  <div id="dl"></div>
-</aside>
-</div>
-</main>
+    <p class="hint" style="margin:12px 0 0">Subtitle terasa kecepatan? Isi angka plus supaya muncul lebih lambat, misalnya 0,5.</p>
+    <button id="dlgClose" type="button">Selesai</button>
+  </div>
+</dialog>
 <script type="module" src="/src/main.js"></script>
 </body>
 </html>
