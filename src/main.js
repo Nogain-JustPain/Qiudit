@@ -79,6 +79,7 @@ async function render() {
 
   if (!loaded) {
     status('Memuat ffmpeg (sekali saja, ~30 MB)...');
+    ffmpeg.on('log', ({ message }) => console.log('[ffmpeg]', message));
     ffmpeg.on('progress', ({ progress: p }) => progress(Math.min(0.99, 0.2 + p * 0.8)));
     await ffmpeg.load({
       coreURL: await toBlobURL('/ffmpeg/ffmpeg-core.js', 'text/javascript'),
@@ -134,6 +135,6 @@ async function render() {
 
 $('go').onclick = async () => {
   $('go').disabled = true; $('out').innerHTML = '';
-  try { await render(); } catch (e) { console.error(e); status('Gagal: ' + e.message); }
+  try { await render(); } catch (e) { console.error(e); status('Gagal: ' + (e && e.message ? e.message : String(e) || 'error tidak diketahui, buka Console (F12)')); }
   $('go').disabled = false;
 };

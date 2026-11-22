@@ -2,4 +2,4 @@
 import { mkdirSync, copyFileSync } from 'node:fs';
 mkdirSync('public/ffmpeg', { recursive: true });
 for (const f of ['ffmpeg-core.js', 'ffmpeg-core.wasm'])
-  copyFileSync(`node_modules/@ffmpeg/core/dist/umd/${f}`, `public/ffmpeg/${f}`);
+  copyFileSync(`node_modules/@ffmpeg/core/dist/esm/${f}`, `public/ffmpeg/${f}`);
