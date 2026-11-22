@@ -6,7 +6,7 @@ import '@fontsource/montserrat/700.css';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import CFG, { MUSIC } from './config.js';
-import { buildArgs } from './ffgraph.js';
+import { buildArgs, planSeq } from './ffgraph.js';
 
 const $ = (id) => document.getElementById(id);
 const ffmpeg = new FFmpeg();
@@ -14,6 +14,7 @@ let loaded = false;
 const status = (t) => ($('status').textContent = t);
 const progress = (v) => { $('bar').hidden = false; $('bar').value = v; };
 const subFont = (size) => CFG.subtitle.font.replace('{size}', size);
+const titleSize = (W) => Math.round((W * CFG.title.size) / 1080);
 const subSize = (W) => Math.max(10, Math.round((W * (+$('subsize')?.value || CFG.subtitle.size)) / 1080));
 
 // ---------- subtitle: SRT atau teks biasa ----------
@@ -29,23 +30,30 @@ function parseSrt(t) {
     return { start: ts(a), end: ts(c), text: l.slice(i + 1).join(' ').replace(/<[^>]+>/g, '').trim() };
   }).filter((c) => c && c.text);
 }
+// Paragraf pertama = judul (tidak dipecah). Sisanya dipecah per kalimat.
 // Timing dibagi di rentang suara saja (jeda awal/akhir VO diabaikan),
-// dan kalimat yang berakhir titik/koma dapat bobot jeda tambahan.
-function cuesFromText(text, s, e) {
-  const max = CFG.subtitle.maxCharsPerCue, parts = [];
-  for (const para of text.split(/\n+/).map((x) => x.trim()).filter(Boolean))
+// kalimat yang berakhir titik/koma dapat bobot jeda tambahan.
+function cuesFromText(text, s, e, withTitle, titleSec) {
+  const max = CFG.subtitle.maxCharsPerCue, paras = text.split(/\n+/).map((x) => x.trim()).filter(Boolean);
+  const list = [];
+  let body = paras;
+  if (withTitle && paras.length > 1) { list.push({ text: paras[0], isTitle: true }); body = paras.slice(1); }
+  for (const para of body)
     for (const sent of para.match(/[^.!?]+[.!?]*/g) || []) {
       let cur = '';
       for (const w of sent.trim().split(/\s+/)) {
-        if (cur && (cur + ' ' + w).length > max) { parts.push(cur); cur = ''; }
+        if (cur && (cur + ' ' + w).length > max) { list.push({ text: cur }); cur = ''; }
         cur = cur ? cur + ' ' + w : w;
       }
-      if (cur) parts.push(cur);
+      if (cur) list.push({ text: cur });
     }
-  const wt = parts.map((p) => p.length + (/[.!?]$/.test(p) ? 14 : /[,;:]$/.test(p) ? 7 : 0));
-  const sum = wt.reduce((a, b) => a + b, 0) || 1;
-  let t = s;
-  return parts.map((p, i) => { const d = ((e - s) * wt[i]) / sum; const c = { start: t, end: t + d, text: p }; t += d; return c; });
+  const wt = (p) => p.text.length + (/[.!?]$/.test(p.text) ? 14 : /[,;:]$/.test(p.text) ? 7 : 0);
+  let t = s, span = e - s, items = list;
+  const out = [];
+  if (list[0]?.isTitle && titleSec > 0) { out.push({ ...list[0], start: s, end: s + titleSec }); t = s + titleSec; span = e - t; items = list.slice(1); }
+  const sum = items.reduce((a, p) => a + wt(p), 0) || 1;
+  for (const p of items) { const d = (span * wt(p)) / sum; out.push({ ...p, start: t, end: t + d }); t += d; }
+  return out;
 }
 
 // ---------- audio ----------
@@ -72,6 +80,7 @@ async function speechBounds(file, T) {
 }
 
 // ---------- gambar via canvas ----------
+// Portrait: dipotong pas 9:16 (nanti di-zoom). Landscape: tinggi penuh, lebar utuh (nanti digeser dari sisi ke sisi).
 async function photoToJpeg(file, W, H) {
   let bmp;
   try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
@@ -83,11 +92,13 @@ async function photoToJpeg(file, W, H) {
     }
   }
   const bw = bmp.naturalWidth || bmp.width, bh = bmp.naturalHeight || bmp.height;
-  const c = new OffscreenCanvas(W, H); const x = c.getContext('2d');
-  const k = Math.max(W / bw, H / bh);
-  x.drawImage(bmp, (W - bw * k) / 2, (H - bh * k) / 2, bw * k, bh * k);
+  const landscape = bw / bh >= 1.1;
+  const cw = landscape ? Math.min(Math.round((H * bw) / bh / 2) * 2, W * 5) : W;
+  const c = new OffscreenCanvas(cw, H); const x = c.getContext('2d');
+  const k = Math.max(cw / bw, H / bh);
+  x.drawImage(bmp, (cw - bw * k) / 2, (H - bh * k) / 2, bw * k, bh * k);
   const blob = await c.convertToBlob({ type: 'image/jpeg', quality: 0.92 });
-  return new Uint8Array(await blob.arrayBuffer());
+  return { bytes: new Uint8Array(await blob.arrayBuffer()), landscape, width: cw };
 }
 // Kotak putih per baris, lebarnya mengikuti teks, teks hitam miring
 async function cueToPng(text, W) {
@@ -110,7 +121,25 @@ async function cueToPng(text, W) {
   });
   return new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer());
 }
-export { cueToPng };
+// Judul: kotak merah Bali Express, teks putih tebal, rata kiri
+async function titleToPng(text, W) {
+  const S = CFG.title, size = titleSize(W), font = `700 ${size}px Montserrat`;
+  const padX = Math.round(size * 0.6), padY = Math.round(size * 0.5), lh = Math.round(size * 1.25), x0 = Math.round(W * 0.06);
+  const probe = new OffscreenCanvas(10, 10).getContext('2d'); probe.font = font;
+  const limit = W * 0.88 - padX * 2, lines = []; let cur = '';
+  for (const w of text.split(' ')) {
+    const tryLine = cur ? cur + ' ' + w : w;
+    if (probe.measureText(tryLine).width > limit && cur) { lines.push(cur); cur = w; } else cur = tryLine;
+  }
+  lines.push(cur);
+  const boxW = Math.ceil(Math.max(...lines.map((l) => probe.measureText(l).width)) + padX * 2), boxH = lines.length * lh + padY * 2;
+  const c = new OffscreenCanvas(W, boxH); const x = c.getContext('2d');
+  x.fillStyle = S.box; x.beginPath(); x.roundRect(x0, 0, boxW, boxH, size * 0.2); x.fill();
+  x.font = font; x.fillStyle = S.color; x.textAlign = 'left'; x.textBaseline = 'middle';
+  lines.forEach((l, i) => x.fillText(l, x0 + padX, padY + lh * i + lh / 2 + size * 0.04));
+  return new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer());
+}
+export { cueToPng, titleToPng };
 
 // ---------- render ----------
 async function render() {
@@ -122,6 +151,7 @@ async function render() {
   const W = $('res').value === '1080' ? 1080 : 720, H = Math.round((W * 16) / 9);
   const F = CFG.fadeSeconds, D = Math.max(+$('dur').value || CFG.photoSeconds, F + 0.5);
   const shift = +$('shift').value || 0, motion = $('motion').value === 'on', fit = $('fit').value;
+  const useTitle = $('usetitle').value === 'on', titleSec = +$('titlesec').value || 0;
 
   if (!loaded) {
     status('Memuat ffmpeg (sekali saja, ~30 MB)...');
@@ -136,6 +166,7 @@ async function render() {
   progress(0.02); status('Menyiapkan bahan...');
   const T = await mediaDuration(vo, 'audio');
   await document.fonts.load(subFont(subSize(W)));
+  await document.fonts.load(`700 ${titleSize(W)}px Montserrat`);
 
   const items = [];
   for (let i = 0; i < files.length; i++) {
@@ -146,16 +177,13 @@ async function render() {
       await ffmpeg.writeFile(name, await fetchFile(f));
       items.push({ kind: 'video', file: name, dur });
     } else {
-      await ffmpeg.writeFile(`p${i}.jpg`, await photoToJpeg(f, W, H));
-      items.push({ kind: 'photo', file: `p${i}.jpg`, dur: D });
+      const r = await photoToJpeg(f, W, H);
+      await ffmpeg.writeFile(`p${i}.jpg`, r.bytes);
+      // foto landscape: durasi menyesuaikan lebar supaya geser penuh tidak terlalu cepat
+      let dur = D;
+      if (motion && r.landscape) dur = Math.min(CFG.panMaxSeconds, Math.max(D, (r.width - W) / (CFG.panSpeedPct * W)));
+      items.push({ kind: 'photo', file: `p${i}.jpg`, dur, landscape: r.landscape });
     }
-  }
-  // urutan bahan diulang sampai durasi VO terpenuhi
-  const seq = []; let total = 0, pc = 0;
-  for (let k = 0; total < T && k < 500; k++) {
-    const it = items[k % items.length];
-    seq.push({ ...it, m: it.kind === 'photo' ? pc++ : 0 });
-    total += seq.length === 1 ? it.dur : it.dur - F;
   }
 
   const ext = (vo.name.split('.').pop() || 'mp3').toLowerCase();
@@ -165,16 +193,20 @@ async function render() {
   const bgmExt = bgm ? (bgm.name.split('.').pop() || 'mp3').toLowerCase() : null;
   if (bgm) await ffmpeg.writeFile(`bgm.${bgmExt}`, await fetchFile(bgm));
 
-  status('Menyiapkan subtitle...');
+  status('Menyiapkan teks...');
   let cues;
-  if (srt) cues = parseSrt(await srt.text());
-  else { const [s, e] = await speechBounds(vo, T); cues = cuesFromText($('script').value, s, e); }
+  if (srt) { cues = parseSrt(await srt.text()); if (useTitle && cues.length > 1) cues[0].isTitle = true; }
+  else { const [s, e] = await speechBounds(vo, T); cues = cuesFromText($('script').value, s, e, useTitle, titleSec); }
   cues = cues.map((c) => ({ ...c, start: Math.max(0, c.start + shift), end: Math.min(T, c.end + shift) })).filter((c) => c.end > c.start);
-  for (let i = 0; i < cues.length; i++) await ffmpeg.writeFile(`s${i}.png`, await cueToPng(cues[i].text, W));
+  const tc = cues[0];
+  let titleEnd = 0;
+  if (tc?.isTitle) { tc.start = 0; if (tc.end > 1.2 && tc.end < T - 2) titleEnd = tc.end; else tc.isTitle = false; }
+  for (let i = 0; i < cues.length; i++) await ffmpeg.writeFile(`s${i}.png`, await (cues[i].isTitle ? titleToPng : cueToPng)(cues[i].text, W));
   progress(0.1);
 
-  const args = buildArgs({ W, H, F, fps: CFG.fps, seq, cues, ext, T, logo: CFG.logo, subBottomPct: CFG.subtitle.bottomPct,
-    zoom: CFG.zoomAmount, pan: CFG.panAmount, motion, fit,
+  const seq = planSeq(items, { T, F, titleEnd, titleTr: CFG.titleTransition.seconds, titleTrName: CFG.titleTransition.name });
+  const args = buildArgs({ W, H, fps: CFG.fps, seq, cues, ext, T, logo: CFG.logo, subBottomPct: CFG.subtitle.bottomPct, titleBottomPct: CFG.title.bottomPct,
+    zoom: CFG.zoomAmount, motion, fit,
     bgmExt, bgmVol: Math.min(1, Math.max(0, (+$('bgmvol').value || 0) / 100)), bgmFade: MUSIC.fadeOutSeconds });
 
   status('Merender video... (tab jangan ditutup)');
