@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bali Express Video Maker</title>
+<style>
+:root{--red:#e8432a;--ink:#1d1d1f;--grey:#6d6e71;--line:#dcdcdc;--bg:#f6f5f3}
+*{box-sizing:border-box}
+body{margin:0;font-family:Montserrat,system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+main{max-width:720px;margin:0 auto;padding:24px 16px 64px}
+header{display:flex;align-items:center;gap:14px;border-bottom:4px solid var(--red);padding-bottom:14px;margin-bottom:24px}
+header img{height:44px}
+h1{font-size:20px;margin:0}
+label{display:block;font-weight:700;font-size:14px;margin:18px 0 6px}
+small{color:var(--grey);font-weight:400}
+input[type=file],textarea,select,input[type=number]{width:100%;padding:10px;border:1px solid var(--line);border-radius:6px;background:#fff;font:inherit;font-size:14px}
+textarea{min-height:130px;resize:vertical}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+button{margin-top:24px;width:100%;padding:14px;border:0;border-radius:6px;background:var(--red);color:#fff;font:700 16px Montserrat,sans-serif;cursor:pointer}
+button:disabled{opacity:.5;cursor:wait}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+progress{width:100%;height:10px;margin-top:16px;accent-color:var(--red)}
+#status{font-size:13px;color:var(--grey);margin-top:6px;min-height:1.4em}
+#out{margin-top:20px;text-align:center}
+#out video{max-height:560px;max-width:100%;background:#000;border-radius:6px}
+#out a{display:inline-block;margin-top:10px;font-weight:700;color:var(--red)}
+</style>
+</head>
+<body>
+<main>
+  <header><img src="/logo.png" alt="Bali Express"><h1>Video Maker</h1></header>
+  <label>Foto <small>(bisa banyak, diulang 1-2-3-1-2-3)</small></label>
+  <input id="photos" type="file" accept="image/*" multiple>
+  <label>Voice over</label>
+  <input id="vo" type="file" accept="audio/*">
+  <label>File SRT <small>(opsional)</small></label>
+  <input id="srt" type="file" accept=".srt">
+  <label>Teks naskah <small>(dipakai kalau tidak ada SRT, timing dibagi sesuai panjang kalimat)</small></label>
+  <textarea id="script"></textarea>
+  <div class="row">
+    <div><label>Resolusi</label>
+      <select id="res"><option value="720">720 x 1280 (lebih cepat)</option><option value="1080">1080 x 1920</option></select></div>
+    <div><label>Detik per foto</label><input id="dur" type="number" min="1" step="0.5" value="4"></div>
+  </div>
+  <button id="go">Render video</button>
+  <progress id="bar" value="0" max="1" hidden></progress>
+  <div id="status"></div>
+  <div id="out"></div>
+</main>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
