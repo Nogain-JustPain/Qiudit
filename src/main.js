@@ -39,10 +39,20 @@ function cuesFromText(text, total) {
 
 // ---------- gambar via canvas ----------
 async function photoToJpeg(file, W, H) {
-  const bmp = await createImageBitmap(file);
+  let bmp;
+  try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+  catch {
+    try {
+      bmp = await new Promise((res, rej) => {
+        const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = URL.createObjectURL(file);
+      });
+    } catch {
+      throw new Error(`Foto "${file.name}" tidak bisa dibaca browser (format ${file.type || file.name.split('.').pop()}). Convert ke JPG/PNG dulu, HEIC dari iPhone tidak didukung.`);
+    }
+  }
   const c = new OffscreenCanvas(W, H); const x = c.getContext('2d');
-  const k = Math.max(W / bmp.width, H / bmp.height);
-  x.drawImage(bmp, (W - bmp.width * k) / 2, (H - bmp.height * k) / 2, bmp.width * k, bmp.height * k);
+  const k = Math.max(W / (bmp.naturalWidth || bmp.width), H / (bmp.naturalHeight || bmp.height));
+  x.drawImage(bmp, (W - (bmp.naturalWidth || bmp.width) * k) / 2, (H - (bmp.naturalHeight || bmp.height) * k) / 2, (bmp.naturalWidth || bmp.width) * k, (bmp.naturalHeight || bmp.height) * k);
   const blob = await c.convertToBlob({ type: 'image/jpeg', quality: 0.92 });
   return new Uint8Array(await blob.arrayBuffer());
 }
