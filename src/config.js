@@ -8,10 +8,12 @@ export default {
   logo: { src: '/logo.png', widthPct: 0.26, yPct: 0.05 },   // logo di tengah atas
   subtitle: {
     font: 'italic 600 {size}px Montserrat',
-    sizePct: 0.042,     // x lebar video
+    size: 32,           // ukuran huruf (px pada lebar 1080, otomatis menyesuaikan resolusi)
     color: '#161616',
     box: '#ffffff',
     maxCharsPerCue: 60, // dipakai saat teks ditempel (tanpa SRT)
     bottomPct: 0.80,    // posisi bawah kotak subtitle (0-1 dari tinggi)
   },
 };
+
+export const MUSIC = { volume: 15, fadeOutSeconds: 2 }; // volume awal musik latar (%), fade out di akhir
