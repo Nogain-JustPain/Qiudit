@@ -151,7 +151,8 @@ async function render() {
 
   const data = await ffmpeg.readFile('out.mp4');
   const url = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
-  $('out').innerHTML = `<video src="${url}" controls playsinline></video><a href="${url}" download="bali-express-video.mp4">Download MP4</a>`;
+  $('out').innerHTML = `<video src="${url}" controls playsinline></video>`;
+  $('dl').innerHTML = `<a href="${url}" download="bali-express-video.mp4">Download MP4</a>`;
   progress(1); status('Selesai.');
   for (const name of (await ffmpeg.listDir('.')).map((e) => e.name)) if (/^(p|s)\d+\.(jpg|png)$/.test(name) || name === 'out.mp4') await ffmpeg.deleteFile(name);
 }
@@ -161,7 +162,7 @@ for (const id of ['photos', 'vo', 'srt']) $(id).onchange = () => {
   const f = [...$(id).files]; $(id + 'Name').textContent = !f.length ? 'Belum ada file' : f.length > 1 ? `${f.length} file dipilih` : f[0].name;
 };
 $('go').onclick = async () => {
-  $('go').disabled = true; $('out').innerHTML = '';
+  $('go').disabled = true; $('out').innerHTML = ''; $('dl').innerHTML = '';
   try { await render(); } catch (e) { console.error(e); status('Gagal: ' + (e && e.message ? e.message : String(e) || 'error tidak diketahui, buka Console (F12)')); }
   $('go').disabled = false;
 };
