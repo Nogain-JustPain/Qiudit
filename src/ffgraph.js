@@ -19,7 +19,7 @@ export function planSeq(items, { T, F, titleEnd = 0, titleTr = 0.6, titleTrName 
 }
 
 // seq = hasil planSeq
-export function buildArgs({ W, H, fps, seq, cues, ext, T, logo, subBottomPct, titleBottomPct, zoom, motion, fit = 'crop', bgmExt, bgmVol = 0.15, bgmFade = 2 }) {
+export function buildArgs({ W, H, fps, seq, cues, ext, T, logo, subBottomPct, titleBottomPct, zoom, motion, fit = 'crop', bgmExt, bgmVol = 0.15, bgmFade = 2, vcodec = ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '24'], flash = null, sfx = null }) {
   const n = seq.length, args = [];
   for (const c of seq) {
     if (c.kind === 'photo') args.push('-loop', '1', '-framerate', String(fps), '-t', c.dur.toFixed(3), '-i', c.file);
@@ -29,6 +29,7 @@ export function buildArgs({ W, H, fps, seq, cues, ext, T, logo, subBottomPct, ti
   cues.forEach((_, i) => args.push('-i', `s${i}.png`));
   args.push('-i', `vo.${ext}`);
   if (bgmExt) args.push('-stream_loop', '-1', '-i', `bgm.${bgmExt}`);
+  if (sfx) args.push('-i', `sfx.${sfx.ext}`);
 
   const f = [];
   const wz = (e) => `scale=w='${W}*(${e})':h='${H}*(${e})':eval=frame:flags=bicubic,crop=${W}:${H}:'(iw-ow)/2':'(ih-oh)/2'`;
@@ -60,6 +61,12 @@ export function buildArgs({ W, H, fps, seq, cues, ext, T, logo, subBottomPct, ti
     f.push(`${cur}[c${k}]xfade=transition=${seq[k].trName}:duration=${seq[k].tr}:offset=${seq[k].start.toFixed(3)}[x${k}]`); cur = `[x${k}]`;
   }
 
+  if (flash) {   // kilatan putih: naik cepat, turun pelan; klip berganti persis di puncaknya
+    const t0 = (flash.at - flash.attack).toFixed(3), t1 = (flash.at + flash.decay).toFixed(3);
+    const e = `max(0,min((t-${t0})/${flash.attack},1-(t-${flash.at.toFixed(3)})/${flash.decay}))`;
+    f.push(`${cur}eq=brightness='${e}':saturation='1-${e}':eval=frame:enable='between(t,${t0},${t1})'[fl]`); cur = '[fl]';
+  }
+
   f.push(`[${n}:v]scale=${Math.round(W * logo.widthPct)}:-1[lg]`);
   f.push(`${cur}[lg]overlay=x='(main_w-overlay_w)/2':y=${Math.round(H * logo.yPct)}[v0]`); cur = '[v0]';
   cues.forEach((c, i) => {
@@ -70,12 +77,14 @@ export function buildArgs({ W, H, fps, seq, cues, ext, T, logo, subBottomPct, ti
 
   const ai = n + 1 + cues.length;
   let aMap = `${ai}:a`;
-  if (bgmExt) {
-    f.push(`[${ai + 1}:a]volume=${bgmVol},afade=t=out:st=${Math.max(0, T - bgmFade).toFixed(2)}:d=${bgmFade}[bg]`);
-    f.push(`[${ai}:a][bg]amix=inputs=2:duration=first,volume=2[aout]`);
-    aMap = '[aout]';
+  const extra = []; let next = ai + 1;
+  if (bgmExt) { f.push(`[${next}:a]volume=${bgmVol},afade=t=out:st=${Math.max(0, T - bgmFade).toFixed(2)}:d=${bgmFade}[bg]`); extra.push('[bg]'); next++; }
+  if (sfx) { const ms = Math.max(0, Math.round(sfx.at * 1000)); f.push(`[${next}:a]volume=${sfx.volume},adelay=${ms}|${ms},apad[sx]`); extra.push('[sx]'); }
+  if (extra.length) {
+    const N = extra.length + 1;   // semua input dibuat tak berujung (apad / loop), jadi level VO stabil
+    f.push(`[${ai}:a]${extra.join('')}amix=inputs=${N}:duration=first,volume=${N}[aout]`); aMap = '[aout]';
   }
 
   return [...args, '-filter_complex', f.join(';'), '-map', '[vout]', '-map', aMap,
-    '-t', T.toFixed(3), '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '24', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', 'out.mp4'];
+    '-t', T.toFixed(3), ...vcodec, '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', 'out.mp4'];
 }

@@ -57,6 +57,28 @@ dialog::backdrop{background:rgba(59,52,43,.4)}
 .dlg-in{padding:22px 22px 24px}
 button#dlgClose{margin-top:18px;width:100%;padding:13px;border:0;border-radius:12px;background:var(--ink);color:var(--paper);font:700 15px Montserrat,sans-serif;cursor:pointer}
 button#dlgClose:hover{background:#26211b}
+.engine{display:inline-block;margin-top:10px;padding:4px 12px;border-radius:99px;background:var(--sand);font-size:12px;color:var(--ink)}
+.trowbtn{display:flex;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap}
+.trowbtn .hint{margin:0}
+button.ghost{padding:9px 16px;border:1px solid var(--line);border-radius:10px;background:var(--paper);color:var(--ink);font:600 13px Montserrat,sans-serif;cursor:pointer}
+button.ghost:hover{background:var(--sand)}
+button.ghost:focus-visible,button#tdone:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+dialog{max-height:92vh;overflow-y:auto}
+dialog.wide{width:min(980px,96vw)}
+.tbar{display:flex;align-items:center;gap:14px;margin:12px 0}
+#ttime{font-size:13px;font-variant-numeric:tabular-nums;color:var(--muted)}
+.zoom{margin-left:auto;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:8px}
+#twrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:#fffdf8}
+#twave{display:block;touch-action:none}
+#tlist{max-height:230px;overflow-y:auto;margin-top:12px}
+.trow{display:grid;grid-template-columns:34px 128px 1fr;gap:8px;align-items:center;padding:3px 4px}
+.trow.on{background:var(--sand);border-radius:8px}
+.trow input{width:100%;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#fffdf8;color:var(--ink);font:inherit;font-size:13px}
+.tp{width:30px;height:30px;border:0;border-radius:8px;background:var(--sand);color:var(--ink);cursor:pointer;font-size:11px}
+.tt{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.tfoot{display:flex;gap:10px;margin-top:16px}
+button#tdone{flex:1;padding:13px;border:0;border-radius:12px;background:var(--ink);color:var(--paper);font:700 15px Montserrat,sans-serif;cursor:pointer}
+button#tdone:hover{background:#26211b}
 </style>
 </head>
 <body>
@@ -64,6 +86,7 @@ button#dlgClose:hover{background:#26211b}
   <header>
     <img src="/logo.png" alt="Bali Express">
     <p>Foto, suara, dan naskah jadi video berita vertikal.</p>
+    <span id="engine" class="engine">Memeriksa mesin render...</span>
   </header>
 
 <div class="layout">
@@ -80,7 +103,8 @@ button#dlgClose:hover{background:#26211b}
     <label class="field"><span>Musik latar <small>(opsional)</small></span>
       <div class="pick"><input id="bgm" type="file" accept="audio/*"><b>Pilih musik</b><em id="bgmName">Belum ada file</em></div></label>
     <label class="field"><span>Teks naskah <small>(dipakai kalau tidak ada SRT, baris pertama jadi judul)</small></span>
-      <textarea id="script" placeholder="Tempel naskah di sini. Timing subtitle dibagi mengikuti suara VO."></textarea></label>
+      <textarea id="script" placeholder="Tempel naskah di sini. Timing subtitle disesuaikan otomatis dengan jeda napas VO."></textarea></label>
+    <div class="trowbtn"><button type="button" id="tedit" class="ghost">Atur timing subtitle</button><span id="tstate" class="hint"></span></div>
   </section>
 
 
@@ -100,6 +124,16 @@ button#dlgClose:hover{background:#26211b}
 </aside>
 </div>
 </main>
+<dialog id="tdlg" class="wide">
+  <div class="dlg-in">
+    <h2>Timing subtitle</h2>
+    <p class="hint">Seret garis merah untuk menggeser pergantian subtitle. Klik di gelombang suara untuk memutar dari titik itu. Area abu-abu adalah jeda napas VO. Garis pertama menentukan kapan judul berganti ke berita (dan kapan flash muncul).</p>
+    <div class="tbar"><button type="button" id="tplay" class="ghost">Putar</button><span id="ttime">0:00.0</span><label class="zoom">Zoom <input id="tzoom" type="range" min="30" max="200" value="70"></label></div>
+    <div id="twrap"><canvas id="twave"></canvas></div>
+    <div id="tlist"></div>
+    <div class="tfoot"><button type="button" id="treset" class="ghost">Hitung ulang otomatis</button><button type="button" id="tdone">Selesai</button></div>
+  </div>
+</dialog>
 <dialog id="dlg">
   <div class="dlg-in">
     <h2>Pengaturan</h2>
@@ -114,6 +148,13 @@ button#dlgClose:hover{background:#26211b}
       <label class="field"><span>Judul di awal</span>
         <select id="usetitle"><option value="on">Ya (baris pertama)</option><option value="off">Tidak</option></select></label>
       <label class="field"><span>Durasi judul <small>(detik)</small></span><input id="titlesec" type="number" min="0" step="0.5" placeholder="otomatis"></label>
+      <label class="field"><span>Transisi judul</span>
+        <select id="titlefx"><option value="flash">Flash kamera + suara</option><option value="slide">Slide</option></select></label>
+      <label class="field"><span>Volume suara kamera <small>(%)</small></span><input id="sfxvol" type="number" min="0" max="100" step="5" value="80"></label>
+      <label class="field"><span>Encoder <small>(server lokal)</small></span>
+        <select id="enc"><option value="auto">Otomatis (GPU jika ada)</option><option value="cpu">CPU saja</option></select></label>
+      <label class="field"><span>Mode render <small>(server lokal)</small></span>
+        <select id="mode"><option value="fast">Cepat (semua core)</option><option value="eco">Hemat (laptop tetap enak dipakai)</option></select></label>
       <label class="field"><span>Geser subtitle <small>(detik)</small></span><input id="shift" type="number" step="0.1" value="0"></label>
       <label class="field"><span>Ukuran subtitle</span><input id="subsize" type="number" min="16" max="80" step="1" value="32"></label>
       <label class="field"><span>Volume musik <small>(%)</small></span><input id="bgmvol" type="number" min="0" max="100" step="5" value="15"></label>
