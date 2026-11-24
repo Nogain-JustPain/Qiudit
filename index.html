@@ -86,7 +86,6 @@ button#tdone:hover{background:#26211b}
   <header>
     <img src="/logo.png" alt="Bali Express">
     <p>Foto, suara, dan naskah jadi video berita vertikal.</p>
-    <span id="engine" class="engine">Memeriksa mesin render...</span>
   </header>
 
 <div class="layout">
@@ -152,10 +151,6 @@ button#tdone:hover{background:#26211b}
         <select id="titlefx"><option value="flash">Flash kamera</option><option value="slide">Slide</option></select></label>
       <label class="field"><span>Jika ada SRT dan naskah</span>
         <select id="srtmode"><option value="ref">Teks dari naskah, SRT untuk waktu</option><option value="srt">Pakai teks dari SRT</option></select></label>
-      <label class="field"><span>Encoder <small>(server lokal)</small></span>
-        <select id="enc"><option value="auto">Otomatis (GPU jika ada)</option><option value="cpu">CPU saja</option></select></label>
-      <label class="field"><span>Mode render <small>(server lokal)</small></span>
-        <select id="mode"><option value="fast">Cepat (semua core)</option><option value="eco">Hemat (laptop tetap enak dipakai)</option></select></label>
       <label class="field"><span>Geser subtitle <small>(detik)</small></span><input id="shift" type="number" step="0.1" value="0"></label>
       <label class="field"><span>Ukuran subtitle</span><input id="subsize" type="number" min="16" max="80" step="1" value="32"></label>
       <label class="field"><span>Volume musik <small>(%)</small></span><input id="bgmvol" type="number" min="0" max="100" step="5" value="15"></label>
