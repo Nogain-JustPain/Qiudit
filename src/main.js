@@ -277,20 +277,15 @@ async function render() {
   const files = [...$('photos').files], vo = $('vo').files[0], srt = $('srt').files[0];
   if (!files.length) return status('Upload minimal satu foto atau video.');
   if (!vo) return status('Upload file voice over.');
-  const local = await detectLocal();
-  const store = new Map();
-  const put = async (name, data) => {
-    if (local) store.set(name, data instanceof Blob ? data : new Blob([data]));
-    else await ffmpeg.writeFile(name, data instanceof Blob ? await fetchFile(data) : data);
-  };
+  const put = async (name, data) => ffmpeg.writeFile(name, data instanceof Blob ? await fetchFile(data) : data);
   const MB = files.reduce((a, f) => a + f.size, 0) / 1048576;
-  if (!local && MB > 500) throw new Error(`Total bahan ${Math.round(MB)} MB, terlalu besar untuk render di browser. Kompres video ke 720p atau kurangi jumlah klip (batas sekitar 500 MB).`);
+  if (MB > 500) throw new Error(`Total bahan ${Math.round(MB)} MB, terlalu besar untuk render di browser. Kompres video ke 720p atau kurangi jumlah klip (batas sekitar 500 MB).`);
   const W = $('res').value === '1080' ? 1080 : 720, H = Math.round((W * 16) / 9);
   const F = CFG.fadeSeconds, D = Math.max(+$('dur').value || CFG.photoSeconds, F + 0.5);
   const shift = +$('shift').value || 0, motion = $('motion').value === 'on', fit = $('fit').value;
   const useTitle = $('usetitle').value === 'on', titleSec = +$('titlesec').value || 0;
 
-  if (!local && !loaded) await loadFfmpeg();
+  if (!loaded) await loadFfmpeg();
   progress(0.02); status('Menyiapkan bahan...');
   status('Membaca voice over...');
   let T;
@@ -348,71 +343,19 @@ async function render() {
     zoom: CFG.zoomAmount, motion, fit, flash,
     bgmExt, bgmVol: Math.min(1, Math.max(0, (+$('bgmvol').value || 0) / 100)), bgmFade: MUSIC.fadeOutSeconds };
 
-  let blob;
-  if (local) {
-    const kind = $('enc').value === 'cpu' ? 'cpu' : (['nvenc', 'qsv', 'amf'].find((k) => local.encoders.includes(k)) || 'cpu');
-    const br = W >= 1080 ? '10M' : '6M';
-    const vc = { cpu: ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22'], nvenc: ['-c:v', 'h264_nvenc', '-b:v', br], qsv: ['-c:v', 'h264_qsv', '-b:v', br], amf: ['-c:v', 'h264_amf', '-b:v', br] };
-    const args = buildArgs({ ...common, vcodec: vc[kind] });
-    const argsCpu = kind === 'cpu' ? null : buildArgs({ ...common, vcodec: vc.cpu });
-    status(`Merender di komputer ini (${kind === 'cpu' ? 'CPU' : 'GPU ' + kind.toUpperCase()})...`);
-    blob = await runLocal(store, args, argsCpu, T, $('mode').value);
-  } else {
-    status('Merender di browser... (tab jangan ditutup)');
-    const code = await ffmpeg.exec(buildArgs(common));
-    if (code !== 0) throw new Error('ffmpeg gagal (kode ' + code + '). Coba resolusi 720, kurangi jumlah klip, atau pakai video MP4 yang lebih kecil.');
-    const data = await ffmpeg.readFile('out.mp4');
-    blob = new Blob([data.buffer], { type: 'video/mp4' });
-    for (const name of (await ffmpeg.listDir('.')).map((e) => e.name))
-      if (/^(p|s|v)\d+\./.test(name) || /^(vo|bgm|logo)\./.test(name) || name === 'out.mp4') await ffmpeg.deleteFile(name);
-  }
+  status('Merender di browser... (tab jangan ditutup)');
+  const code = await ffmpeg.exec(buildArgs(common));
+  if (code !== 0) throw new Error('ffmpeg gagal (kode ' + code + '). Coba resolusi 720, kurangi jumlah klip, atau pakai video MP4 yang lebih kecil.');
+  const data = await ffmpeg.readFile('out.mp4');
+  const blob = new Blob([data.buffer], { type: 'video/mp4' });
+  for (const name of (await ffmpeg.listDir('.')).map((e) => e.name))
+    if (/^(p|s|v)\d+\./.test(name) || /^(vo|bgm|logo)\./.test(name) || name === 'out.mp4') await ffmpeg.deleteFile(name);
 
   const url = URL.createObjectURL(blob);
   $('out').innerHTML = `<video src="${url}" controls playsinline></video>`;
   $('dl').innerHTML = `<a href="${url}" download="bali-express-video.mp4">Download MP4</a>`;
   progress(1); status('Selesai.');
 }
-
-// ---------- server lokal ----------
-async function detectLocal() {
-  try {
-    const r = await fetch('/api/health', { cache: 'no-store' });
-    if (!r.ok) return null;
-    const j = await r.json();
-    return j && j.ffmpeg ? j : null;
-  } catch { return null; }
-}
-async function runLocal(store, args, argsCpu, T, mode) {
-  const fd = new FormData();
-  fd.append('meta', JSON.stringify({ args, argsCpu, mode }));
-  for (const [name, blob] of store) fd.append(name, blob, name);
-  const res = await fetch('/api/render', { method: 'POST', body: fd });
-  if (!res.ok || !res.body) throw new Error('Server lokal menolak permintaan (kode ' + res.status + ').');
-  const reader = res.body.getReader(), dec = new TextDecoder();
-  let buf = '', done = null;
-  for (;;) {
-    const { value, done: end } = await reader.read();
-    if (end) break;
-    buf += dec.decode(value, { stream: true });
-    let i;
-    while ((i = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
-      if (!line) continue;
-      const msg = JSON.parse(line);
-      if (msg.t != null) progress(Math.min(0.99, 0.1 + (0.9 * msg.t) / T));
-      if (msg.info) status(msg.info);
-      if (msg.error) throw new Error(msg.error);
-      if (msg.done) done = msg;
-    }
-  }
-  if (!done) throw new Error('Render terputus sebelum selesai.');
-  return await (await fetch(`/api/result/${done.id}`)).blob();
-}
-detectLocal().then((l) => {
-  $('engine').textContent = l
-    ? `Render: ffmpeg di komputer ini (${l.encoders.length ? 'GPU ' + l.encoders.join(', ').toUpperCase() : 'CPU'})`
-    : 'Render: di browser (lebih lambat)';
-});
 
 // nama file terpilih
 for (const id of ['photos', 'vo', 'srt', 'bgm']) $(id).onchange = () => {
