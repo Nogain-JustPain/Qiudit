@@ -7,7 +7,7 @@ import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import CFG, { MUSIC } from './config.js';
 import { buildArgs, planSeq } from './ffgraph.js';
-import { textUnits, analyze, autoCues, fallbackCues, alignToSrt } from './align.js';
+import { textUnits, analyze, autoCues, fallbackCues, alignToSrt, groupCues } from './align.js';
 
 const $ = (id) => document.getElementById(id);
 const ffmpeg = new FFmpeg();
@@ -61,15 +61,16 @@ async function getBaseCues(vo, srt, T, useTitle, titleSec, allowManual = true) {
       let pauses = [];
       try { const v = await decodeVo(vo); pauses = analyze(v.data, v.sr, 0.07).pauses; } catch { /* tanpa rekat ke jeda */ }
       const r = alignToSrt(units, raw, pauses);
-      if (r.coverage >= 0.4) return r.cues;
+      if (r.coverage >= 0.4) return groupCues(r.cues, CFG.subtitle.maxCharsPerCue);
       status(`SRT kurang cocok dengan naskah (${Math.round(r.coverage * 100)}% kata), memakai jeda napas VO.`);
     } else {
       if (useTitle && raw.length > 1) raw[0].isTitle = true;
       return raw;
     }
   }
-  try { const v = await decodeVo(vo); return autoCues(v.data, v.sr, units, titleSec).cues; }
-  catch { return fallbackCues(units, 0, T, titleSec); }
+  const max = CFG.subtitle.maxCharsPerCue;
+  try { const v = await decodeVo(vo); return groupCues(autoCues(v.data, v.sr, units, titleSec).cues, max); }
+  catch { return groupCues(fallbackCues(units, 0, T, titleSec), max); }
 }
 function refreshState() {
   if (manual && manual.sig !== currentSig()) manual = null;

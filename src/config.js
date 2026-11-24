@@ -16,7 +16,7 @@ export default {
     size: 32,           // ukuran huruf (px pada lebar 1080, otomatis menyesuaikan resolusi)
     color: '#161616',
     box: '#ffffff',
-    maxCharsPerCue: 60, // dipakai saat teks ditempel (tanpa SRT)
+    maxCharsPerCue: 70, // dipakai saat teks ditempel (tanpa SRT)
     bottomPct: 0.77,    // posisi bawah kotak subtitle (0-1 dari tinggi)
   },
 };

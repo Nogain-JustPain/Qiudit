@@ -3,18 +3,22 @@
 
 // ---- 1. Teks -> unit subtitle, tiap unit tahu "kekuatan" jeda setelahnya ----
 // strength: 3 = akhir paragraf, 2 = akhir kalimat, 1 = koma/titik koma, 0 = potongan di tengah kalimat
-export function textUnits(text, withTitle, max = 60) {
+export function textUnits(text, withTitle, max = 60, fine = true) {
   const paras = text.split(/\n+/).map((x) => x.trim()).filter(Boolean);
-  const units = []; let body = paras;
-  if (withTitle && paras.length > 1) { units.push({ text: paras[0], isTitle: true, strength: 3 }); body = paras.slice(1); }
+  const units = []; let body = paras, sid = 0;
+  if (withTitle && paras.length > 1) { units.push({ text: paras[0], isTitle: true, strength: 3, sent: sid++ }); body = paras.slice(1); }
   for (const para of body) {
     for (const sent of para.match(/[^.!?]+[.!?]*/g) || []) {
-      let cur = '';
-      for (const w of sent.trim().split(/\s+/)) {
-        if (cur && (cur + ' ' + w).length > max) { units.push({ text: cur }); cur = ''; }
-        cur = cur ? cur + ' ' + w : w;
+      // klausa dipisah di koma/titik koma/titik dua; klausa yang masih terlalu panjang dipotong per kata
+      for (const clause of fine ? sent.trim().split(/(?<=[,;:])\s+/) : [sent.trim()]) {
+        let cur = '';
+        for (const w of clause.split(/\s+/)) {
+          if (cur && (cur + ' ' + w).length > max) { units.push({ text: cur, sent: sid }); cur = ''; }
+          cur = cur ? cur + ' ' + w : w;
+        }
+        if (cur) units.push({ text: cur, sent: sid });
       }
-      if (cur) units.push({ text: cur });
+      sid++;
     }
     units[units.length - 1].paraEnd = true;
   }
@@ -23,6 +27,27 @@ export function textUnits(text, withTitle, max = 60) {
     u.strength = u.paraEnd ? 3 : /[.!?]$/.test(u.text) ? 2 : /[,;:]$/.test(u.text) ? 1 : 0;
   }
   return units;
+}
+
+// Gabungkan potongan halus menjadi subtitle yang enak dibaca: hanya di dalam satu kalimat,
+// maksimal `max` karakter, dan ekor kalimat yang terlalu pendek (mis. satu kata) ditempel ke potongan sebelumnya.
+export function groupCues(cues, max = 60, soft = max + 15) {
+  const out = [];
+  for (const c of cues) {
+    const prev = out[out.length - 1];
+    const same = prev && !c.isTitle && !prev.isTitle && prev.sent === c.sent;
+    if (same && prev.text.length + 1 + c.text.length <= max) { prev.text += ' ' + c.text; prev.end = c.end; continue; }
+    out.push({ ...c });
+  }
+  for (let i = out.length - 1; i > 0; i--) {   // ekor pendek -> tempel ke sebelumnya
+    const c = out[i], p = out[i - 1];
+    if (!c.isTitle && !p.isTitle && c.sent === p.sent && c.text.length < 20 && p.text.length + 1 + c.text.length <= soft) { p.text += ' ' + c.text; p.end = c.end; out.splice(i, 1); }
+  }
+  for (let i = 0; i < out.length - 1; i++) {   // pembuka pendek (mis. "Sementara,") -> tempel ke berikutnya
+    const c = out[i], nx = out[i + 1];
+    if (!c.isTitle && !nx.isTitle && c.sent === nx.sent && c.text.length < 15 && c.text.length + 1 + nx.text.length <= soft) { nx.text = c.text + ' ' + nx.text; nx.start = c.start; out.splice(i, 1); i--; }
+  }
+  return out.map(({ sent, strength, ...rest }) => rest);
 }
 
 // ---- 2. Audio -> rentang suara + daftar jeda ----
@@ -52,26 +77,26 @@ const wtOf = (u) => u.text.length + (u.strength === 3 ? 20 : u.strength === 2 ? 
 export function fallbackCues(units, s, e, titleSec = 0) {
   if (!units.length) return [];
   const out = []; let t = s, rest = units;
-  if (units[0].isTitle && titleSec > 0 && units.length > 1) { out.push({ text: units[0].text, isTitle: true, start: s, end: s + titleSec }); t = s + titleSec; rest = units.slice(1); }
+  if (units[0].isTitle && titleSec > 0 && units.length > 1) { out.push({ text: units[0].text, isTitle: true, sent: units[0].sent, start: s, end: s + titleSec }); t = s + titleSec; rest = units.slice(1); }
   const total = rest.reduce((a, u) => a + wtOf(u), 0) || 1, span = e - t;
-  for (const u of rest) { const d = (span * wtOf(u)) / total; out.push({ text: u.text, ...(u.isTitle ? { isTitle: true } : {}), start: t, end: t + d }); t += d; }
+  for (const u of rest) { const d = (span * wtOf(u)) / total; out.push({ text: u.text, ...(u.isTitle ? { isTitle: true } : {}), sent: u.sent, start: t, end: t + d }); t += d; }
   return out;
 }
 
 // ---- 3. Cocokkan batas teks dengan jeda audio (urutan terjaga, DP) ----
-export function alignUnits(units, speech, pauses, titleSec = 0) {
-  const n = units.length; let [s, e] = speech;
+// Bertingkat: (1) akhir kalimat/paragraf <-> jeda panjang, (2) koma <-> jeda sedang, hanya di antara jangkar tingkat 1,
+// (3) sisanya diperkirakan dari panjang teks, lalu direkatkan ke jeda terdekat yang belum terpakai.
+export function alignUnits(units, speech, pauses, titleSec = 0, snapLoose = true) {
+  const n = units.length; const [s, e] = speech;
   if (!n) return { cues: [], cost: 0, matched: 0, total: 0 };
   if (units[0].isTitle && titleSec > 0 && n > 1) {
-    const ts = s + titleSec, r = alignUnits(units.slice(1), [ts, e], pauses.filter((p) => p.mid > ts + 0.3), 0);
-    return { ...r, cues: [{ text: units[0].text, isTitle: true, start: s, end: ts }, ...r.cues] };
+    const ts = s + titleSec, r = alignUnits(units.slice(1), [ts, e], pauses.filter((p) => p.mid > ts + 0.3), 0, snapLoose);
+    return { ...r, cues: [{ text: units[0].text, isTitle: true, sent: units[0].sent, strength: 3, start: s, end: ts }, ...r.cues] };
   }
-    const bidx = []; for (let k = 0; k < n - 1; k++) if (units[k].strength >= 1) bidx.push(k);
-  const NEED = { 3: 0.45, 2: 0.3, 1: 0.14 }, SKIP = 2.5, m = bidx.length, q = pauses.length;
-
-  // Waktu akhir tiap unit. Di antara dua jangkar (jeda yang sudah cocok), durasi jeda terukur dikeluarkan,
-  // lalu sisa waktu bicara dibagi menurut panjang teks. Batas tanpa jeda dianggap punya jeda perkiraan kecil.
+  const NEED = { 3: 0.45, 2: 0.3, 1: 0.14 };
   const bonus = (u) => (u.strength === 3 ? 20 : u.strength === 2 ? 14 : u.strength === 1 ? 7 : 0);
+
+  // Waktu akhir tiap unit. Di antara dua jangkar, durasi jeda terukur dikeluarkan dulu, sisanya dibagi menurut panjang teks.
   const interp = (anchors) => {
     const T = new Float64Array(n), keys = [...anchors.keys()].sort((x, y) => x - y);
     let a = -1;
@@ -86,43 +111,70 @@ export function alignUnits(units, speech, pauses, titleSec = 0) {
     }
     return T;
   };
-  const run = (est, sigma) => {
+
+  // DP: cocokkan daftar batas `bs` dengan daftar jeda `ps` (keduanya berurutan); batas boleh tak punya pasangan (biaya `skip`)
+  const match = (bs, ps, est, sigma, skip) => {
+    const m = bs.length, q = ps.length, anchors = new Map();
+    if (!m || !q) return { anchors, cost: m * skip };
     const W = q + 1, dp = new Float64Array((m + 1) * W), ch = new Int8Array((m + 1) * W);
-    for (let i = 1; i <= m; i++) dp[i * W] = i * SKIP;
+    for (let i = 1; i <= m; i++) dp[i * W] = i * skip;
     for (let i = 1; i <= m; i++) for (let j = 1; j <= q; j++) {
-      const k = bidx[i - 1], p = pauses[j - 1], need = NEED[units[k].strength];
+      const k = bs[i - 1], p = ps[j - 1], need = NEED[units[k].strength];
       const cost = Math.abs(p.mid - est[k]) / sigma + (Math.max(0, need - p.dur) / need) * 2 - (units[k].strength >= 2 ? 0.4 * Math.min(1, p.dur / 0.8) : 0);
-      let best = dp[i * W + j - 1], c = 1;                       // jeda ini tidak dipakai
-      const skip = dp[(i - 1) * W + j] + SKIP; if (skip < best) { best = skip; c = 2; }   // batas teks tanpa jeda
-      const mt = dp[(i - 1) * W + j - 1] + cost; if (mt < best) { best = mt; c = 3; }    // cocok
+      let best = dp[i * W + j - 1], c = 1;
+      const sk = dp[(i - 1) * W + j] + skip; if (sk < best) { best = sk; c = 2; }
+      const mt = dp[(i - 1) * W + j - 1] + cost; if (mt < best) { best = mt; c = 3; }
       dp[i * W + j] = best; ch[i * W + j] = c;
     }
-    const anchors = new Map(); let i = m, j = q;
-    while (i > 0 && j >= 0) {
+    for (let i = m, j = q; i > 0;) {
       if (j === 0) { i--; continue; }
       const c = ch[i * W + j];
-      if (c === 3) { anchors.set(bidx[i - 1], pauses[j - 1]); i--; j--; } else if (c === 2) i--; else j--;
+      if (c === 3) { anchors.set(bs[i - 1], ps[j - 1]); i--; j--; } else if (c === 2) i--; else j--;
     }
     return { anchors, cost: dp[m * W + q] };
   };
 
-  const est0 = interp(new Map());
-  const p1 = run(est0, Math.max(1.2, 0.06 * (e - s)));          // putaran 1: toleransi lebar
-  const p2 = run(interp(p1.anchors), 0.7);                      // putaran 2: perkiraan sudah dikoreksi jangkar
-  const T = interp(p2.anchors), cues = [];
-  for (let k = 0; k < n; k++) cues.push({ text: units[k].text, ...(units[k].isTitle ? { isTitle: true } : {}), start: k ? T[k - 1] : s, end: k < n - 1 ? T[k] : e });
-  return { cues, cost: p2.cost, matched: p2.anchors.size, total: m };
+  const b1 = [], b2 = [];
+  for (let k = 0; k < n - 1; k++) { if (units[k].strength >= 2) b1.push(k); else if (units[k].strength === 1) b2.push(k); }
+
+  // tingkat 1: kalimat/paragraf <-> jeda panjang (dua putaran: perkiraan kasar, lalu dikoreksi jangkar)
+  const strong = pauses.filter((p) => p.dur >= 0.4);
+  const r0 = match(b1, strong, interp(new Map()), Math.max(1.2, 0.06 * (e - s)), 2.5);
+  const r1 = match(b1, strong, interp(r0.anchors), 0.7, 2.5);
+  const anchors = new Map(r1.anchors);
+
+  // tingkat 2: koma <-> jeda sedang yang belum terpakai (perkiraan sudah akurat, jadi toleransi sempit)
+  const used = new Set(anchors.values());
+  const weak = pauses.filter((p) => !used.has(p) && p.dur >= 0.2);
+  const r2 = match(b2, weak, interp(anchors), 0.6, 1.2);
+  for (const [k, p] of r2.anchors) anchors.set(k, p);
+
+  const T = interp(anchors);
+  if (snapLoose) {   // batas lain: rekatkan ke jeda terdekat yang belum dipakai
+    for (const p of anchors.values()) used.add(p);
+    for (let k = 0; k < n - 1; k++) {
+      if (anchors.has(k)) continue;
+      let best = null;
+      for (const p of pauses) if (!used.has(p) && p.dur >= 0.2 && Math.abs(p.mid - T[k]) <= 0.35 && p.mid > (k ? T[k - 1] : s) + 0.2 && p.mid < T[k + 1] - 0.2 && (!best || Math.abs(p.mid - T[k]) < Math.abs(best.mid - T[k]))) best = p;
+      if (best) { T[k] = best.mid; used.add(best); }
+    }
+  }
+  const cues = [];
+  for (let k = 0; k < n; k++) cues.push({ text: units[k].text, ...(units[k].isTitle ? { isTitle: true } : {}), sent: units[k].sent, strength: units[k].strength, start: k ? T[k - 1] : s, end: k < n - 1 ? T[k] : e });
+  return { cues, cost: r1.cost + r2.cost, matched: anchors.size, total: b1.length + b2.length };
 }
 
-// Coba beberapa ambang sunyi, pilih yang paling cocok dengan teks
-export function autoCues(data, sr, units, titleSec = 0) {
+// Coba ambang sunyi dari yang paling ketat. Dipakai ambang pertama yang punya cukup jeda panjang
+// untuk batas kalimat/paragraf; kalau tidak ada, pilih yang paling cocok dengan teks.
+export function autoCues(data, sr, units, titleSec = 0, snapLoose = true, mults = [0.07, 0.12, 0.2]) {
+  const need = Math.ceil(0.6 * units.slice(0, -1).filter((u) => u.strength >= 2).length);
   let best = null;
-  for (const mult of [0.07, 0.12, 0.2]) {
+  for (const mult of mults) {
     const a = analyze(data, sr, mult);
-    if (a.pauses.length < 1 && best) continue;
-    const r = alignUnits(units, a.speech, a.pauses, titleSec);
-    const score = r.cost / Math.max(1, r.total);
-    if (!best || score < best.score) best = { ...r, score, analysis: a };
+    const r = alignUnits(units, a.speech, a.pauses, titleSec, snapLoose);
+    const cand = { ...r, score: r.cost / Math.max(1, r.total), analysis: a };
+    if (a.pauses.filter((p) => p.dur >= 0.4).length >= need) return cand;
+    if (!best || cand.score < best.score) best = cand;
   }
   return best || { cues: [], matched: 0, total: 0, score: 0 };
 }
@@ -186,11 +238,11 @@ export function alignToSrt(units, srtCues, pauses = []) {
   const B = [];
   for (let k = 0; k < units.length - 1; k++) {
     let t = (span[k].b + span[k + 1].a) / 2, best = null;
-    const st = units[k].strength, win = st >= 2 ? 0.9 : 0.4, need = st === 3 ? 0.45 : st === 2 ? 0.3 : 0.14;   // batas kalimat: cari lebih jauh, tapi hanya jeda yang cukup panjang
-    for (const p of pauses) if (p.dur >= need && Math.abs(p.mid - t) <= win && (!best || Math.abs(p.mid - t) < Math.abs(best.mid - t))) best = p;
+    const st = units[k].strength, win = st >= 2 ? 0.9 : 0.3, need = st === 3 ? 0.45 : st === 2 ? 0.3 : 0.2;   // kalimat: cari lebih jauh, tapi hanya jeda yang cukup panjang; koma: dekat saja; potongan biasa: tidak direkatkan
+    if (st > 0) for (const p of pauses) if (p.dur >= need && Math.abs(p.mid - t) <= win && (!best || Math.abs(p.mid - t) < Math.abs(best.mid - t))) best = p;
     if (best) t = best.mid;
     B.push(Math.max(t, (B[k - 1] ?? -Infinity) + 0.15));
   }
-  const cues = units.map((u, k) => ({ text: u.text, ...(u.isTitle ? { isTitle: true } : {}), start: k ? B[k - 1] : span[0].a, end: k < units.length - 1 ? B[k] : span[k].b }));
+  const cues = units.map((u, k) => ({ text: u.text, ...(u.isTitle ? { isTitle: true } : {}), sent: u.sent, start: k ? B[k - 1] : span[0].a, end: k < units.length - 1 ? B[k] : span[k].b }));
   return { cues, coverage };
 }
