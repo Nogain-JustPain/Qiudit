@@ -12,7 +12,8 @@
     "@ffmpeg/core": "0.12.6",
     "@ffmpeg/ffmpeg": "0.12.10",
     "@ffmpeg/util": "0.12.1",
-    "@fontsource/montserrat": "5.1.0"
+    "@fontsource/montserrat": "5.1.0",
+    "@huggingface/transformers": "3.8.1"
   },
   "devDependencies": {
     "vite": "5.4.11"

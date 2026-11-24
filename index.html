@@ -151,6 +151,10 @@ button#tdone:hover{background:#26211b}
         <select id="titlefx"><option value="flash">Flash kamera</option><option value="slide">Slide</option></select></label>
       <label class="field"><span>Jika ada SRT dan naskah</span>
         <select id="srtmode"><option value="ref">Teks dari naskah, SRT untuk waktu</option><option value="srt">Pakai teks dari SRT</option></select></label>
+      <label class="field"><span>Timing subtitle <small>(dari naskah)</small></span>
+        <select id="timing"><option value="whisper">Whisper (akurat, unduh model sekali)</option><option value="pause">Jeda napas (cepat)</option></select></label>
+      <label class="field"><span>Model Whisper</span>
+        <select id="wmodel"><option value="Xenova/whisper-base">Base (~80 MB, lebih akurat)</option><option value="Xenova/whisper-tiny">Tiny (~40 MB, lebih cepat)</option></select></label>
       <label class="field"><span>Geser subtitle <small>(detik)</small></span><input id="shift" type="number" step="0.1" value="0"></label>
       <label class="field"><span>Ukuran subtitle</span><input id="subsize" type="number" min="16" max="80" step="1" value="32"></label>
       <label class="field"><span>Volume musik <small>(%)</small></span><input id="bgmvol" type="number" min="0" max="100" step="5" value="15"></label>
