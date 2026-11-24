@@ -10,7 +10,7 @@ import { buildArgs, planSeq } from './ffgraph.js';
 import { textUnits, analyze, autoCues, fallbackCues, alignToSrt, groupCues } from './align.js';
 
 const $ = (id) => document.getElementById(id);
-const ffmpeg = new FFmpeg();
+let ffmpeg = new FFmpeg();
 let loaded = false;
 const status = (t) => ($('status').textContent = t);
 const progress = (v) => { $('bar').hidden = false; $('bar').value = v; };
@@ -249,6 +249,29 @@ async function titleToPng(text, W) {
 }
 export { cueToPng, titleToPng };
 
+// ---------- muat ffmpeg (timeout + coba ulang dengan instance baru) ----------
+async function loadFfmpeg() {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    status(attempt === 1 ? 'Memuat ffmpeg (sekali saja, ~30 MB)...' : 'ffmpeg belum merespons, mencoba ulang...');
+    const f = new FFmpeg();
+    f.on('log', ({ message }) => console.log('[ffmpeg]', message));
+    f.on('progress', ({ progress: p }) => progress(Math.min(0.99, 0.2 + p * 0.8)));
+    try {
+      const [coreURL, wasmURL] = await withTimeout(Promise.all([
+        toBlobURL('/ffmpeg/ffmpeg-core.js', 'text/javascript'),
+        toBlobURL('/ffmpeg/ffmpeg-core.wasm', 'application/wasm'),
+      ]), 60000, 'File ffmpeg di /ffmpeg/ tidak terunduh (timeout). Pastikan server dev jalan dan folder public/ffmpeg ada (jalankan npm install).');
+      status('Menyalakan ffmpeg...');
+      await withTimeout(f.load({ coreURL, wasmURL }), 60000, 'ffmpeg tidak merespons. Refresh halaman (Ctrl+Shift+R), tutup tab lain yang memakai banyak memori, atau coba browser lain.');
+      ffmpeg = f; loaded = true; return;
+    } catch (e) {
+      console.error('load ffmpeg gagal', e);
+      try { f.terminate(); } catch { /* abaikan */ }
+      if (attempt === 2) throw e;
+    }
+  }
+}
+
 // ---------- render ----------
 async function render() {
   const files = [...$('photos').files], vo = $('vo').files[0], srt = $('srt').files[0];
@@ -267,16 +290,7 @@ async function render() {
   const shift = +$('shift').value || 0, motion = $('motion').value === 'on', fit = $('fit').value;
   const useTitle = $('usetitle').value === 'on', titleSec = +$('titlesec').value || 0;
 
-  if (!local && !loaded) {
-    status('Memuat ffmpeg (sekali saja, ~30 MB)...');
-    ffmpeg.on('log', ({ message }) => console.log('[ffmpeg]', message));
-    ffmpeg.on('progress', ({ progress: p }) => progress(Math.min(0.99, 0.2 + p * 0.8)));
-    await ffmpeg.load({
-      coreURL: await toBlobURL('/ffmpeg/ffmpeg-core.js', 'text/javascript'),
-      wasmURL: await toBlobURL('/ffmpeg/ffmpeg-core.wasm', 'application/wasm'),
-    });
-    loaded = true;
-  }
+  if (!local && !loaded) await loadFfmpeg();
   progress(0.02); status('Menyiapkan bahan...');
   status('Membaca voice over...');
   let T;
