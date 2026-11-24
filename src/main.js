@@ -38,6 +38,7 @@ const mediaDuration = (file, tag) => new Promise((res, rej) => {
   a.onerror = () => rej(new Error(tag === 'audio' ? 'Voice over tidak bisa dibaca' : `Video "${file.name}" tidak bisa dibaca browser. Pakai MP4 (H.264), HEVC dari sebagian HP perlu di-convert dulu.`));
   a.src = URL.createObjectURL(file);
 });
+const withTimeout = (p, ms, msg) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
 const isVideo = (f) => f.type.startsWith('video/') || /\.(mp4|mov|m4v|webm|mkv)$/i.test(f.name);
 // ---------- timing subtitle: otomatis dari jeda VO + editor geser manual ----------
 const voCache = { key: '' };
@@ -277,13 +278,20 @@ async function render() {
     loaded = true;
   }
   progress(0.02); status('Menyiapkan bahan...');
-  const T = await mediaDuration(vo, 'audio');
-  await document.fonts.load(subFont(subSize(W)));
-  await document.fonts.load(`700 ${titleSize(W)}px Montserrat`);
+  status('Membaca voice over...');
+  let T;
+  try { T = (await withTimeout(decodeVo(vo), 30000, 'timeout')).duration; }   // decode WAV langsung, lebih tahan banting daripada elemen <audio>
+  catch { T = await withTimeout(mediaDuration(vo, 'audio'), 15000, 'Voice over tidak bisa dibaca browser (timeout). Coba convert ke MP3 atau WAV PCM 16-bit.'); }
+  if (!isFinite(T) || T <= 0) throw new Error('Durasi voice over tidak terbaca. Coba convert ke MP3 atau WAV PCM 16-bit.');
+  status('Memuat font...');
+  try {
+    await withTimeout(Promise.all([document.fonts.load(subFont(subSize(W))), document.fonts.load(`700 ${titleSize(W)}px Montserrat`)]), 8000, 'font');
+  } catch { /* lanjut dengan font bawaan */ }
 
   const items = [];
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
+    status(`Memproses bahan ${i + 1} dari ${files.length}...`);
     if (isVideo(f)) {
       const dur = Math.max(1, (await mediaDuration(f, 'video')) - 0.05);
       const name = `v${i}.${(f.name.split('.').pop() || 'mp4').toLowerCase()}`;
@@ -300,8 +308,11 @@ async function render() {
   }
 
   const ext = (vo.name.split('.').pop() || 'mp3').toLowerCase();
+  status('Menyalin voice over dan logo...');
   await put(`vo.${ext}`, vo);
-  await put('logo.png', await (await fetch(CFG.logo.src)).blob());
+  const logoRes = await fetch(CFG.logo.src);
+  if (!logoRes.ok) throw new Error('logo.png tidak ditemukan di folder public/.');
+  await put('logo.png', await logoRes.blob());
   const bgm = $('bgm').files[0];
   const bgmExt = bgm ? (bgm.name.split('.').pop() || 'mp3').toLowerCase() : null;
   if (bgm) await put(`bgm.${bgmExt}`, bgm);
@@ -318,21 +329,9 @@ async function render() {
   const useFlash = titleEnd > 0 && $('titlefx').value === 'flash';
   const tr = useFlash ? { name: 'fade', seconds: CFG.flash.cutSeconds } : CFG.titleTransition;
   const flash = useFlash ? { at: titleEnd, attack: CFG.flash.attack, decay: CFG.flash.decay } : null;
-  let sfx = null;
-  const sfxVol = Math.min(1, Math.max(0, (+$('sfxvol').value || 0) / 100));
-  if (useFlash && sfxVol > 0) {
-    try {
-      const r = await fetch(CFG.sfx.src);
-      if (r.ok) {
-        const ext = CFG.sfx.src.split('.').pop();
-        await put(`sfx.${ext}`, await r.blob());
-        sfx = { ext, volume: sfxVol, at: Math.max(0, titleEnd - CFG.sfx.lead) };
-      }
-    } catch { /* lanjut tanpa SFX */ }
-  }
   const seq = planSeq(items, { T, F, titleEnd, titleTr: tr.seconds, titleTrName: tr.name });
   const common = { W, H, fps: CFG.fps, seq, cues, ext, T, logo: CFG.logo, subBottomPct: CFG.subtitle.bottomPct, titleBottomPct: CFG.title.bottomPct,
-    zoom: CFG.zoomAmount, motion, fit, flash, sfx,
+    zoom: CFG.zoomAmount, motion, fit, flash,
     bgmExt, bgmVol: Math.min(1, Math.max(0, (+$('bgmvol').value || 0) / 100)), bgmFade: MUSIC.fadeOutSeconds };
 
   let blob;
@@ -351,7 +350,7 @@ async function render() {
     const data = await ffmpeg.readFile('out.mp4');
     blob = new Blob([data.buffer], { type: 'video/mp4' });
     for (const name of (await ffmpeg.listDir('.')).map((e) => e.name))
-      if (/^(p|s|v)\d+\./.test(name) || /^(vo|bgm|logo|sfx)\./.test(name) || name === 'out.mp4') await ffmpeg.deleteFile(name);
+      if (/^(p|s|v)\d+\./.test(name) || /^(vo|bgm|logo)\./.test(name) || name === 'out.mp4') await ffmpeg.deleteFile(name);
   }
 
   const url = URL.createObjectURL(blob);
