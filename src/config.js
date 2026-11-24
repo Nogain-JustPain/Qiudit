@@ -20,4 +20,5 @@ export default {
   },
 };
 
+export const WHISPER = { language: 'indonesian' };   // bahasa VO untuk pengenalan suara
 export const MUSIC = { volume: 15, fadeOutSeconds: 2 }; // volume awal musik latar (%), fade out di akhir

@@ -5,8 +5,9 @@ import '@fontsource/montserrat/600-italic.css';
 import '@fontsource/montserrat/700.css';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
-import CFG, { MUSIC } from './config.js';
+import CFG, { MUSIC, WHISPER } from './config.js';
 import { buildArgs, planSeq } from './ffgraph.js';
+import { transcribeWords } from './whisper.js';
 import { textUnits, analyze, autoCues, fallbackCues, alignToSrt, groupCues } from './align.js';
 
 const $ = (id) => document.getElementById(id);
@@ -50,9 +51,21 @@ async function decodeVo(file) {
   Object.assign(voCache, { key, sr: buf.sampleRate, data: buf.getChannelData(0), duration: buf.duration });
   return voCache;
 }
+const wCache = { key: '', words: null };
+let note = '';   // catatan yang ditampilkan setelah render selesai
+async function whisperWords(vo) {
+  const model = $('wmodel').value, key = `${fileSig(vo)}|${model}`;
+  if (wCache.key === key) return wCache.words;
+  status('Menyiapkan audio untuk Whisper...');
+  const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+  let buf; try { buf = await ctx.decodeAudioData(await vo.arrayBuffer()); } finally { ctx.close(); }
+  const words = await transcribeWords(Float32Array.from(buf.getChannelData(0)), { model, language: WHISPER.language, onStatus: status });
+  Object.assign(wCache, { key, words });
+  return words;
+}
 let manual = null;   // hasil editor: { sig, cues }
 const fileSig = (f) => (f ? `${f.name}|${f.size}|${f.lastModified}` : '');
-const currentSig = () => [$('script').value, fileSig($('vo').files[0]), fileSig($('srt').files[0]), $('usetitle').value, $('titlesec').value, $('srtmode').value].join('§');
+const currentSig = () => [$('script').value, fileSig($('vo').files[0]), fileSig($('srt').files[0]), $('usetitle').value, $('titlesec').value, $('srtmode').value, $('timing').value].join('§');
 async function getBaseCues(vo, srt, T, useTitle, titleSec, allowManual = true) {
   if (allowManual && manual && manual.sig === currentSig()) return manual.cues.map((c) => ({ ...c }));
   const units = textUnits($('script').value, useTitle, CFG.subtitle.maxCharsPerCue);
@@ -70,6 +83,16 @@ async function getBaseCues(vo, srt, T, useTitle, titleSec, allowManual = true) {
     }
   }
   const max = CFG.subtitle.maxCharsPerCue;
+  if ($('timing').value === 'whisper' && units.length) {
+    try {
+      const words = await whisperWords(vo);
+      let pauses = [];
+      try { const v = await decodeVo(vo); pauses = analyze(v.data, v.sr, 0.07).pauses; } catch { /* tanpa rekat ke jeda */ }
+      const r = alignToSrt(units, words, pauses, true);
+      if (r.coverage >= 0.4) return groupCues(r.cues, max);
+      note = `Whisper kurang cocok dengan naskah (${Math.round(r.coverage * 100)}% kata), timing memakai jeda napas.`;
+    } catch (e) { console.error('Whisper gagal', e); note = 'Whisper gagal (' + (e && e.message ? e.message : 'error') + '), timing memakai jeda napas.'; }
+  }
   try { const v = await decodeVo(vo); return groupCues(autoCues(v.data, v.sr, units, titleSec).cues, max); }
   catch { return groupCues(fallbackCues(units, 0, T, titleSec), max); }
 }
@@ -77,9 +100,9 @@ function refreshState() {
   if (manual && manual.sig !== currentSig()) manual = null;
   const srt = $('srt').files[0], hasScript = !!$('script').value.trim();
   $('tstate').textContent = manual ? `Timing diatur manual (${manual.cues.length} subtitle)`
-    : srt ? (hasScript && $('srtmode').value === 'ref' ? 'Timing dari SRT, teks dari naskah' : 'Memakai SRT apa adanya') : 'Timing otomatis dari jeda napas VO';
+    : srt ? (hasScript && $('srtmode').value === 'ref' ? 'Timing dari SRT, teks dari naskah' : 'Memakai SRT apa adanya') : $('timing').value === 'whisper' ? 'Timing otomatis dari pengenalan suara (Whisper)' : 'Timing otomatis dari jeda napas VO';
 }
-for (const id of ['script', 'usetitle', 'titlesec', 'vo', 'srt', 'srtmode']) for (const ev of ['input', 'change']) $(id).addEventListener(ev, refreshState);
+for (const id of ['script', 'usetitle', 'titlesec', 'vo', 'srt', 'srtmode', 'timing']) for (const ev of ['input', 'change']) $(id).addEventListener(ev, refreshState);
 
 const ED = { cues: [], T: 0, env: null, dt: 0.02, pauses: [], pps: 70, cols: null, mx: 1, audio: null, drag: null, handles: [], raf: 0, stopAt: 0 };
 const fmt = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;
@@ -348,7 +371,7 @@ async function render() {
   const bgmExt = bgm ? (bgm.name.split('.').pop() || 'mp3').toLowerCase() : null;
   if (bgm) await put(`bgm.${bgmExt}`, bgm);
 
-  status('Menyiapkan teks...');
+  status('Menyiapkan teks...'); note = '';
   let cues = await getBaseCues(vo, srt, T, useTitle, titleSec);
   cues = cues.map((c) => ({ ...c, start: Math.max(0, c.start + shift), end: Math.min(T, c.end + shift) })).filter((c) => c.end > c.start);
   const tc = cues[0];
@@ -376,7 +399,7 @@ async function render() {
   const url = URL.createObjectURL(blob);
   $('out').innerHTML = `<video src="${url}" controls playsinline></video>`;
   $('dl').innerHTML = `<a href="${url}" download="bali-express-video.mp4">Download MP4</a>`;
-  progress(1); status('Selesai.');
+  progress(1); status('Selesai.' + (note ? ' ' + note : ''));
 }
 
 // nama file terpilih

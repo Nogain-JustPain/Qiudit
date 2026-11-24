@@ -197,7 +197,7 @@ function similarity(a, b) {
   return 1 - prev[b.length] / Math.max(a.length, b.length);
 }
 
-export function alignToSrt(units, srtCues, pauses = []) {
+export function alignToSrt(units, srtCues, pauses = [], wordLevel = false) {
   const sw = [];   // kata naskah
   units.forEach((u, i) => { for (const w of u.text.split(/\s+/)) { const n = norm(w); if (n) sw.push({ n, unit: i, t0: null, t1: null }); } });
   const rw = [];   // kata SRT; waktu tiap kata dibagi rata menurut panjang di dalam barisnya
@@ -241,12 +241,12 @@ export function alignToSrt(units, srtCues, pauses = []) {
   for (const w of sw) { span[w.unit].a = Math.min(span[w.unit].a, w.t0); span[w.unit].b = Math.max(span[w.unit].b, w.t1); }
   const B = [];
   for (let k = 0; k < units.length - 1; k++) {
-    let t = (span[k].b + span[k + 1].a) / 2, best = null;
+    let t = wordLevel ? Math.max(span[k].b, span[k + 1].a - LEAD) : (span[k].b + span[k + 1].a) / 2, best = null;   // waktu kata akurat: ganti tepat sebelum kata berikutnya mulai
     const st = units[k].strength, win = st >= 2 ? 0.9 : 0.3, need = st === 3 ? 0.45 : st === 2 ? 0.3 : 0.2;   // kalimat: cari lebih jauh, tapi hanya jeda yang cukup panjang; koma: dekat saja; potongan biasa: tidak direkatkan
     if (st > 0) for (const p of pauses) if (p.dur >= need && Math.abs(p.mid - t) <= win && (!best || Math.abs(p.mid - t) < Math.abs(best.mid - t))) best = p;
     if (best) t = cutAt(best);
     B.push(Math.max(t, (B[k - 1] ?? -Infinity) + 0.15));
   }
-  const cues = units.map((u, k) => ({ text: u.text, ...(u.isTitle ? { isTitle: true } : {}), sent: u.sent, start: k ? B[k - 1] : span[0].a, end: k < units.length - 1 ? B[k] : span[k].b }));
+  const cues = units.map((u, k) => ({ text: u.text, ...(u.isTitle ? { isTitle: true } : {}), sent: u.sent, start: k ? B[k - 1] : wordLevel ? Math.max(0, span[0].a - LEAD) : span[0].a, end: k < units.length - 1 ? B[k] : span[k].b }));
   return { cues, coverage };
 }
