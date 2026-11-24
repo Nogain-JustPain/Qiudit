@@ -7,7 +7,7 @@ import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import CFG, { MUSIC } from './config.js';
 import { buildArgs, planSeq } from './ffgraph.js';
-import { textUnits, analyze, autoCues, fallbackCues } from './align.js';
+import { textUnits, analyze, autoCues, fallbackCues, alignToSrt } from './align.js';
 
 const $ = (id) => document.getElementById(id);
 const ffmpeg = new FFmpeg();
@@ -51,19 +51,33 @@ async function decodeVo(file) {
 }
 let manual = null;   // hasil editor: { sig, cues }
 const fileSig = (f) => (f ? `${f.name}|${f.size}|${f.lastModified}` : '');
-const currentSig = () => [$('script').value, fileSig($('vo').files[0]), fileSig($('srt').files[0]), $('usetitle').value, $('titlesec').value].join('§');
+const currentSig = () => [$('script').value, fileSig($('vo').files[0]), fileSig($('srt').files[0]), $('usetitle').value, $('titlesec').value, $('srtmode').value].join('§');
 async function getBaseCues(vo, srt, T, useTitle, titleSec, allowManual = true) {
   if (allowManual && manual && manual.sig === currentSig()) return manual.cues.map((c) => ({ ...c }));
-  if (srt) { const c = parseSrt(await srt.text()); if (useTitle && c.length > 1) c[0].isTitle = true; return c; }
   const units = textUnits($('script').value, useTitle, CFG.subtitle.maxCharsPerCue);
+  if (srt) {
+    const raw = parseSrt(await srt.text());
+    if (units.length && $('srtmode').value === 'ref') {   // teks dari naskah, SRT hanya patokan waktu
+      let pauses = [];
+      try { const v = await decodeVo(vo); pauses = analyze(v.data, v.sr, 0.07).pauses; } catch { /* tanpa rekat ke jeda */ }
+      const r = alignToSrt(units, raw, pauses);
+      if (r.coverage >= 0.4) return r.cues;
+      status(`SRT kurang cocok dengan naskah (${Math.round(r.coverage * 100)}% kata), memakai jeda napas VO.`);
+    } else {
+      if (useTitle && raw.length > 1) raw[0].isTitle = true;
+      return raw;
+    }
+  }
   try { const v = await decodeVo(vo); return autoCues(v.data, v.sr, units, titleSec).cues; }
   catch { return fallbackCues(units, 0, T, titleSec); }
 }
 function refreshState() {
   if (manual && manual.sig !== currentSig()) manual = null;
-  $('tstate').textContent = manual ? `Timing diatur manual (${manual.cues.length} subtitle)` : 'Timing otomatis dari jeda napas VO';
+  const srt = $('srt').files[0], hasScript = !!$('script').value.trim();
+  $('tstate').textContent = manual ? `Timing diatur manual (${manual.cues.length} subtitle)`
+    : srt ? (hasScript && $('srtmode').value === 'ref' ? 'Timing dari SRT, teks dari naskah' : 'Memakai SRT apa adanya') : 'Timing otomatis dari jeda napas VO';
 }
-for (const id of ['script', 'usetitle', 'titlesec', 'vo', 'srt']) for (const ev of ['input', 'change']) $(id).addEventListener(ev, refreshState);
+for (const id of ['script', 'usetitle', 'titlesec', 'vo', 'srt', 'srtmode']) for (const ev of ['input', 'change']) $(id).addEventListener(ev, refreshState);
 
 const ED = { cues: [], T: 0, env: null, dt: 0.02, pauses: [], pps: 70, cols: null, mx: 1, audio: null, drag: null, handles: [], raf: 0, stopAt: 0 };
 const fmt = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;
@@ -139,7 +153,8 @@ async function openEditor() {
     Object.assign(ED, { T: v.duration, env: a.env, dt: a.dt, pauses: a.pauses });
     ED.cues = (await getBaseCues(vo, srt, v.duration, $('usetitle').value === 'on', +$('titlesec').value || 0)).map((c) => ({ ...c }));
     ED.audio = new Audio(URL.createObjectURL(vo)); ED.audio.onended = pause;
-    $('tdlg').showModal(); layoutEditor(); buildHandles(); renderList(); drawEditor(); $('ttime').textContent = fmt(0); status('');
+    $('tdlg').showModal(); layoutEditor(); buildHandles(); renderList(); drawEditor(); $('ttime').textContent = fmt(0);
+    if ($('status').textContent === 'Menganalisis suara...') status('');
   } catch (e) { status('Gagal membuka editor timing: ' + (e && e.message ? e.message : 'file audio tidak bisa dibaca')); }
   $('tedit').disabled = false;
 }

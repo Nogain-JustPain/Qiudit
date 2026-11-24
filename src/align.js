@@ -126,3 +126,71 @@ export function autoCues(data, sr, units, titleSec = 0) {
   }
   return best || { cues: [], matched: 0, total: 0, score: 0 };
 }
+
+// ---- 4. Naskah + SRT (dari Whisper dll): SRT hanya jadi patokan WAKTU, teks tetap dari naskah ----
+const norm = (w) => w.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+function similarity(a, b) {
+  if (a === b) return 1;
+  if (!a || !b) return 0;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return 1 - prev[b.length] / Math.max(a.length, b.length);
+}
+
+export function alignToSrt(units, srtCues, pauses = []) {
+  const sw = [];   // kata naskah
+  units.forEach((u, i) => { for (const w of u.text.split(/\s+/)) { const n = norm(w); if (n) sw.push({ n, unit: i, t0: null, t1: null }); } });
+  const rw = [];   // kata SRT; waktu tiap kata dibagi rata menurut panjang di dalam barisnya
+  for (const c of srtCues) {
+    const ws = c.text.split(/\s+/).map((w) => ({ n: norm(w) })).filter((w) => w.n);
+    const tot = ws.reduce((a, w) => a + w.n.length + 1, 0) || 1; let t = c.start;
+    for (const w of ws) { const d = ((c.end - c.start) * (w.n.length + 1)) / tot; w.t0 = t; w.t1 = t + d; t += d; rw.push(w); }
+  }
+  const n = sw.length, m = rw.length;
+  if (!n || !m) return { cues: [], coverage: 0 };
+
+  // penyelarasan urutan kata (Needleman-Wunsch): cocok mirip +, celah -1
+  const W = m + 1, sc = new Float32Array((n + 1) * W), tb = new Int8Array((n + 1) * W);
+  for (let i = 1; i <= n; i++) { sc[i * W] = -i; tb[i * W] = 2; }
+  for (let j = 1; j <= m; j++) { sc[j] = -j; tb[j] = 3; }
+  const s = (a, b) => { const v = similarity(a, b); return v >= 0.5 ? 4 * v - 1 : -2; };
+  for (let i = 1; i <= n; i++) for (let j = 1; j <= m; j++) {
+    const d = sc[(i - 1) * W + j - 1] + s(sw[i - 1].n, rw[j - 1].n), u = sc[(i - 1) * W + j] - 1, l = sc[i * W + j - 1] - 1;
+    if (d >= u && d >= l) { sc[i * W + j] = d; tb[i * W + j] = 1; } else if (u >= l) { sc[i * W + j] = u; tb[i * W + j] = 2; } else { sc[i * W + j] = l; tb[i * W + j] = 3; }
+  }
+  let matched = 0;
+  for (let i = n, j = m; i > 0 || j > 0;) {
+    const c = tb[i * W + j];
+    if (c === 1) { if (similarity(sw[i - 1].n, rw[j - 1].n) >= 0.5) { sw[i - 1].t0 = rw[j - 1].t0; sw[i - 1].t1 = rw[j - 1].t1; matched++; } i--; j--; }
+    else if (c === 2) i--; else j--;
+  }
+  const coverage = matched / n;
+
+  // kata naskah yang tidak ketemu: waktunya dibagi di antara tetangga yang ketemu
+  const first = srtCues[0].start, last = srtCues[srtCues.length - 1].end;
+  for (let i = 0; i < n;) {
+    if (sw[i].t0 != null) { i++; continue; }
+    let j = i; while (j < n && sw[j].t0 == null) j++;
+    const a = i ? sw[i - 1].t1 : first, b = j < n ? sw[j].t0 : last, tot = sw.slice(i, j).reduce((x, w) => x + w.n.length + 1, 0);
+    let t = a; for (let k = i; k < j; k++) { const d = ((Math.max(b, a) - a) * (sw[k].n.length + 1)) / tot; sw[k].t0 = t; sw[k].t1 = t + d; t += d; }
+    i = j;
+  }
+
+  // waktu per unit subtitle: batas = titik tengah antara kata terakhir unit ini dan kata pertama unit berikutnya, lalu direkatkan ke jeda napas
+  const span = units.map(() => ({ a: Infinity, b: -Infinity }));
+  for (const w of sw) { span[w.unit].a = Math.min(span[w.unit].a, w.t0); span[w.unit].b = Math.max(span[w.unit].b, w.t1); }
+  const B = [];
+  for (let k = 0; k < units.length - 1; k++) {
+    let t = (span[k].b + span[k + 1].a) / 2, best = null;
+    const st = units[k].strength, win = st >= 2 ? 0.9 : 0.4, need = st === 3 ? 0.45 : st === 2 ? 0.3 : 0.14;   // batas kalimat: cari lebih jauh, tapi hanya jeda yang cukup panjang
+    for (const p of pauses) if (p.dur >= need && Math.abs(p.mid - t) <= win && (!best || Math.abs(p.mid - t) < Math.abs(best.mid - t))) best = p;
+    if (best) t = best.mid;
+    B.push(Math.max(t, (B[k - 1] ?? -Infinity) + 0.15));
+  }
+  const cues = units.map((u, k) => ({ text: u.text, ...(u.isTitle ? { isTitle: true } : {}), start: k ? B[k - 1] : span[0].a, end: k < units.length - 1 ? B[k] : span[k].b }));
+  return { cues, coverage };
+}

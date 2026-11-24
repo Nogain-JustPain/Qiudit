@@ -98,7 +98,7 @@ button#tdone:hover{background:#26211b}
       <div class="pick"><input id="photos" type="file" accept="image/*,video/*" multiple><b>Pilih file</b><em id="photosName">Belum ada file</em></div></label>
     <label class="field"><span>Voice over</span>
       <div class="pick"><input id="vo" type="file" accept="audio/*"><b>Pilih audio</b><em id="voName">Belum ada file</em></div></label>
-    <label class="field"><span>File SRT <small>(opsional)</small></span>
+    <label class="field"><span>File SRT <small>(opsional; kalau naskah juga diisi, SRT jadi patokan waktu)</small></span>
       <div class="pick"><input id="srt" type="file" accept=".srt"><b>Pilih SRT</b><em id="srtName">Belum ada file</em></div></label>
     <label class="field"><span>Musik latar <small>(opsional)</small></span>
       <div class="pick"><input id="bgm" type="file" accept="audio/*"><b>Pilih musik</b><em id="bgmName">Belum ada file</em></div></label>
@@ -151,6 +151,8 @@ button#tdone:hover{background:#26211b}
       <label class="field"><span>Transisi judul</span>
         <select id="titlefx"><option value="flash">Flash kamera + suara</option><option value="slide">Slide</option></select></label>
       <label class="field"><span>Volume suara kamera <small>(%)</small></span><input id="sfxvol" type="number" min="0" max="100" step="5" value="80"></label>
+      <label class="field"><span>Jika ada SRT dan naskah</span>
+        <select id="srtmode"><option value="ref">Teks dari naskah, SRT untuk waktu</option><option value="srt">Pakai teks dari SRT</option></select></label>
       <label class="field"><span>Encoder <small>(server lokal)</small></span>
         <select id="enc"><option value="auto">Otomatis (GPU jika ada)</option><option value="cpu">CPU saja</option></select></label>
       <label class="field"><span>Mode render <small>(server lokal)</small></span>
