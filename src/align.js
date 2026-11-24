@@ -71,6 +71,10 @@ export function analyze(data, sr, mult = 0.07) {
   return { duration: data.length / sr, speech, pauses, env, dt, p95 };
 }
 
+// Subtitle berikutnya muncul sesaat sebelum suara mulai lagi (akhir jeda), bukan di tengah jeda.
+export const LEAD = 0.08;
+const cutAt = (p) => Math.max(p.start + 0.05, p.end - LEAD);
+
 const wtOf = (u) => u.text.length + (u.strength === 3 ? 20 : u.strength === 2 ? 14 : u.strength === 1 ? 7 : 0);
 
 // Cadangan tanpa jeda: bagi proporsional berdasarkan panjang teks
@@ -101,12 +105,12 @@ export function alignUnits(units, speech, pauses, titleSec = 0, snapLoose = true
     const T = new Float64Array(n), keys = [...anchors.keys()].sort((x, y) => x - y);
     let a = -1;
     for (const b of [...keys, n - 1]) {
-      const ta = a < 0 ? s : anchors.get(a).end;
+      const ta = a < 0 ? s : cutAt(anchors.get(a));
       let tb = b === n - 1 ? e : anchors.get(b).start; if (tb <= ta) tb = ta + 0.01;
       let total = 0; for (let u = a + 1; u <= b; u++) total += units[u].text.length + (u < b ? bonus(units[u]) : 0);
       let c = 0;
       for (let u = a + 1; u < b; u++) { c += units[u].text.length; T[u] = ta + ((tb - ta) * (c + bonus(units[u]) / 2)) / (total || 1); c += bonus(units[u]); }
-      T[b] = b === n - 1 ? e : anchors.get(b).mid;
+      T[b] = b === n - 1 ? e : cutAt(anchors.get(b));
       a = b;
     }
     return T;
@@ -156,7 +160,7 @@ export function alignUnits(units, speech, pauses, titleSec = 0, snapLoose = true
       if (anchors.has(k)) continue;
       let best = null;
       for (const p of pauses) if (!used.has(p) && p.dur >= 0.2 && Math.abs(p.mid - T[k]) <= 0.35 && p.mid > (k ? T[k - 1] : s) + 0.2 && p.mid < T[k + 1] - 0.2 && (!best || Math.abs(p.mid - T[k]) < Math.abs(best.mid - T[k]))) best = p;
-      if (best) { T[k] = best.mid; used.add(best); }
+      if (best) { T[k] = cutAt(best); used.add(best); }
     }
   }
   const cues = [];
@@ -240,7 +244,7 @@ export function alignToSrt(units, srtCues, pauses = []) {
     let t = (span[k].b + span[k + 1].a) / 2, best = null;
     const st = units[k].strength, win = st >= 2 ? 0.9 : 0.3, need = st === 3 ? 0.45 : st === 2 ? 0.3 : 0.2;   // kalimat: cari lebih jauh, tapi hanya jeda yang cukup panjang; koma: dekat saja; potongan biasa: tidak direkatkan
     if (st > 0) for (const p of pauses) if (p.dur >= need && Math.abs(p.mid - t) <= win && (!best || Math.abs(p.mid - t) < Math.abs(best.mid - t))) best = p;
-    if (best) t = best.mid;
+    if (best) t = cutAt(best);
     B.push(Math.max(t, (B[k - 1] ?? -Infinity) + 0.15));
   }
   const cues = units.map((u, k) => ({ text: u.text, ...(u.isTitle ? { isTitle: true } : {}), sent: u.sent, start: k ? B[k - 1] : span[0].a, end: k < units.length - 1 ? B[k] : span[k].b }));
