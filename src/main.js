@@ -270,7 +270,8 @@ async function downloadBlobURL(url, type, label) {
     throw e;
   } finally { clearTimeout(timer); }
 }
-const FF_SOURCES = ['/ffmpeg', 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm'];
+// CDN dulu (cepat, di-cache dekat pengguna); file milik situs sendiri jadi cadangan
+const FF_SOURCES = ['https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm', '/ffmpeg'];
 async function loadFfmpeg() {
   const errors = [];
   for (const base of FF_SOURCES) {
@@ -285,9 +286,9 @@ async function loadFfmpeg() {
       ffmpeg = f; loaded = true; return;
     } catch (e) {
       console.error('load ffmpeg gagal dari', base, e);
-      errors.push(`${base.startsWith('/') ? 'lokal' : 'CDN'}: ${e.message}`);
+      errors.push(`${base.startsWith('/') ? 'situs ini' : 'CDN'}: ${e.message}`);
       try { f.terminate(); } catch { /* abaikan */ }
-      if (base === FF_SOURCES[0]) status('Unduhan lokal gagal, mencoba CDN...');
+      if (base === FF_SOURCES[0]) status('CDN gagal, mencoba file dari situs ini...');
     }
   }
   throw new Error('ffmpeg gagal dimuat. ' + errors.join(' | '));
