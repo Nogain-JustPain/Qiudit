@@ -249,27 +249,48 @@ async function titleToPng(text, W) {
 }
 export { cueToPng, titleToPng };
 
-// ---------- muat ffmpeg (timeout + coba ulang dengan instance baru) ----------
+// ---------- muat ffmpeg: unduh dengan indikator, deteksi macet, cadangan CDN ----------
+async function downloadBlobURL(url, type, label) {
+  const ctl = new AbortController(); let timer;
+  const kick = () => { clearTimeout(timer); timer = setTimeout(() => ctl.abort(), 15000); };
+  kick();
+  try {
+    const res = await fetch(url, { signal: ctl.signal, cache: 'no-store' });
+    if (!res.ok) throw new Error(`${label}: server membalas HTTP ${res.status}`);
+    if ((res.headers.get('content-type') || '').includes('text/html')) throw new Error(`${label}: file tidak ada (server membalas halaman HTML)`);
+    const total = +res.headers.get('content-length') || 0, rd = res.body.getReader(), chunks = []; let got = 0;
+    for (;;) {
+      const { done, value } = await rd.read(); if (done) break;
+      chunks.push(value); got += value.length; kick();
+      status(`Mengunduh ${label}... ${(got / 1048576).toFixed(1)}${total ? ' / ' + (total / 1048576).toFixed(1) : ''} MB`);
+    }
+    return URL.createObjectURL(new Blob(chunks, { type }));
+  } catch (e) {
+    if (ctl.signal.aborted) throw new Error(`${label}: unduhan macet (tidak ada data selama 15 detik)`);
+    throw e;
+  } finally { clearTimeout(timer); }
+}
+const FF_SOURCES = ['/ffmpeg', 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm'];
 async function loadFfmpeg() {
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    status(attempt === 1 ? 'Memuat ffmpeg (sekali saja, ~30 MB)...' : 'ffmpeg belum merespons, mencoba ulang...');
+  const errors = [];
+  for (const base of FF_SOURCES) {
     const f = new FFmpeg();
     f.on('log', ({ message }) => console.log('[ffmpeg]', message));
     f.on('progress', ({ progress: p }) => progress(Math.min(0.99, 0.2 + p * 0.8)));
     try {
-      const [coreURL, wasmURL] = await withTimeout(Promise.all([
-        toBlobURL('/ffmpeg/ffmpeg-core.js', 'text/javascript'),
-        toBlobURL('/ffmpeg/ffmpeg-core.wasm', 'application/wasm'),
-      ]), 60000, 'File ffmpeg di /ffmpeg/ tidak terunduh (timeout). Pastikan server dev jalan dan folder public/ffmpeg ada (jalankan npm install).');
+      const coreURL = await downloadBlobURL(`${base}/ffmpeg-core.js`, 'text/javascript', 'ffmpeg-core.js');
+      const wasmURL = await downloadBlobURL(`${base}/ffmpeg-core.wasm`, 'application/wasm', 'ffmpeg-core.wasm');
       status('Menyalakan ffmpeg...');
-      await withTimeout(f.load({ coreURL, wasmURL }), 60000, 'ffmpeg tidak merespons. Refresh halaman (Ctrl+Shift+R), tutup tab lain yang memakai banyak memori, atau coba browser lain.');
+      await withTimeout(f.load({ coreURL, wasmURL }), 60000, 'ffmpeg tidak merespons setelah diunduh');
       ffmpeg = f; loaded = true; return;
     } catch (e) {
-      console.error('load ffmpeg gagal', e);
+      console.error('load ffmpeg gagal dari', base, e);
+      errors.push(`${base.startsWith('/') ? 'lokal' : 'CDN'}: ${e.message}`);
       try { f.terminate(); } catch { /* abaikan */ }
-      if (attempt === 2) throw e;
+      if (base === FF_SOURCES[0]) status('Unduhan lokal gagal, mencoba CDN...');
     }
   }
+  throw new Error('ffmpeg gagal dimuat. ' + errors.join(' | '));
 }
 
 // ---------- render ----------
