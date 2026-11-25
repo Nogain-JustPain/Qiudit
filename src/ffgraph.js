@@ -34,17 +34,20 @@ export function buildArgs({ W, H, fps, seq, cues, ext, T, logo, subBottomPct, ti
   if (sfx) args.push('-i', `sfx.${sfx.ext}`);
 
   const f = [];
-  // zoom dari tengah: posisi crop dihitung dari rumus zoom (bukan iw/ih, yang membeku di ukuran frame pertama)
-  const wz = (e) => `scale=w='${W}*(${e})':h='${H}*(${e})':eval=frame:flags=bicubic,crop=${W}:${H}:'${W}*((${e})-1)/2':'${H}*((${e})-1)/2'`;
+  // zoom dari tengah dengan filter perspective (resampling sub-piksel, jauh lebih mulus daripada scale+crop yang dibulatkan ke piksel per frame)
+  const wz = (e) => {
+    const a = `(W/2*(1-1/(${e})))`, b = `(H/2*(1-1/(${e})))`;
+    return `perspective=x0='${a}':y0='${b}':x1='W-${a}':y1='${b}':x2='${a}':y2='H-${b}':x3='W-${a}':y3='H-${b}':interpolation=linear:eval=frame`;
+  };
   const sw = Math.round(W / 6 / 2) * 2, sh = Math.round(H / 6 / 2) * 2;
 
   seq.forEach((c, k) => {
     if (c.kind === 'photo') {
-      const p = `n/${Math.round(c.dur * fps)}`;
+      const p = `n/${Math.round(c.dur * fps)}`, pz = `in/${Math.round(c.dur * fps)}`;   // pz: nomor frame untuk perspective
       const base = `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H}`;   // potong tengah, pas 9:16
       let chain = base;                                                                       // 'static'
       if (c.effect === 'panr' || c.effect === 'panl') chain = `crop=${W}:${H}:'(iw-ow)*(${((1 - panCover) / 2).toFixed(4)}+${panCover}*(${c.effect === 'panr' ? p : `1-${p}`}))':0`;   // geser penuh sisi ke sisi
-      else if (c.effect === 'zin' || c.effect === 'zout') chain = (c.wide ? base + ',' : '') + wz(c.effect === 'zin' ? `1+${zoom}*${p}` : `1+${zoom}*(1-${p})`);   // zoom in / out
+      else if (c.effect === 'zin' || c.effect === 'zout') chain = (c.wide ? base + ',' : '') + wz(c.effect === 'zin' ? `1+${zoom}*${pz}` : `1+${zoom}*(1-${pz})`);   // zoom in / out
       f.push(`[${k}:v]${chain},setsar=1,format=yuv420p[c${k}]`);
       return;
     }
