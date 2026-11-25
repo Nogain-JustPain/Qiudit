@@ -79,6 +79,12 @@ dialog.wide{width:min(980px,96vw)}
 .tfoot{display:flex;gap:10px;margin-top:16px}
 button#tdone{flex:1;padding:13px;border:0;border-radius:12px;background:var(--ink);color:var(--paper);font:700 15px Montserrat,sans-serif;cursor:pointer}
 button#tdone:hover{background:#26211b}
+.fxrow{display:grid;grid-template-columns:22px 44px minmax(0,1fr) 150px;gap:10px;align-items:center;padding:7px 0;border-top:1px solid var(--line)}
+.fxrow img,.fxrow video{width:44px;height:44px;object-fit:cover;border-radius:8px;background:var(--sand)}
+.fxname{font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fxrow select{padding:7px 10px;font-size:13px}
+.fxrow .hint{margin:0;grid-column:4}
+@media(max-width:480px){.fxrow{grid-template-columns:22px 44px minmax(0,1fr)}.fxrow select,.fxrow .hint{grid-column:1/-1}}
 </style>
 </head>
 <body>
@@ -92,7 +98,7 @@ button#tdone:hover{background:#26211b}
 <div class="form">
   <section class="card">
     <h2>Bahan video</h2>
-    <p class="hint">Foto dan video diputar berurutan (video sepanjang aslinya, suara asli dimatikan), diulang sampai voice over selesai.</p>
+    <p class="hint">Foto dan video diputar berurutan (video sepanjang aslinya, suara asli dimatikan), diulang sampai voice over selesai. Gerakan tiap foto bisa diatur di Pengaturan.</p>
     <label class="field"><span>Foto dan video</span>
       <div class="pick"><input id="photos" type="file" accept="image/*,video/*" multiple><b>Pilih file</b><em id="photosName">Belum ada file</em></div></label>
     <label class="field"><span>Voice over</span>
@@ -140,8 +146,8 @@ button#tdone:hover{background:#26211b}
       <label class="field"><span>Resolusi</span>
         <select id="res"><option value="720">720 x 1280 (lebih cepat)</option><option value="1080">1080 x 1920</option></select></label>
       <label class="field"><span>Detik per foto</span><input id="dur" type="number" min="1" step="0.5" value="4"></label>
-      <label class="field"><span>Gerak foto</span>
-        <select id="motion"><option value="on">Zoom dan geser</option><option value="off">Diam</option></select></label>
+      <label class="field"><span>Gerak foto <small>(bawaan)</small></span>
+        <select id="motion"><option value="on">Zoom dan geser (otomatis)</option><option value="off">Diam</option></select></label>
       <label class="field"><span>Tampilan video</span>
         <select id="fit"><option value="crop">Isi penuh (dipotong)</option><option value="blur">Utuh dengan latar blur</option></select></label>
       <label class="field"><span>Judul di awal</span>
@@ -155,9 +161,16 @@ button#tdone:hover{background:#26211b}
         <select id="timing"><option value="whisper">Whisper (akurat, unduh model sekali)</option><option value="pause">Jeda napas (cepat)</option></select></label>
       <label class="field"><span>Model Whisper</span>
         <select id="wmodel"><option value="Xenova/whisper-base">Base (~80 MB, lebih akurat)</option><option value="Xenova/whisper-tiny">Tiny (~40 MB, lebih cepat)</option></select></label>
+      <label class="field"><span>Kosongkan form setelah download</span>
+        <select id="autoclear"><option value="on">Ya</option><option value="off">Tidak</option></select></label>
       <label class="field"><span>Geser subtitle <small>(detik)</small></span><input id="shift" type="number" step="0.1" value="0"></label>
       <label class="field"><span>Ukuran subtitle</span><input id="subsize" type="number" min="16" max="80" step="1" value="32"></label>
       <label class="field"><span>Volume musik <small>(%)</small></span><input id="bgmvol" type="number" min="0" max="100" step="5" value="15"></label>
+    </div>
+    <div style="margin-top:22px">
+      <h2>Gerakan per foto</h2>
+      <p class="hint">Daftar muncul otomatis sesuai foto yang dipilih (urutan sama dengan urutan file). "Otomatis" mengikuti pengaturan Gerak foto (bawaan) di atas.</p>
+      <div id="fxlist"></div>
     </div>
     <p class="hint" style="margin:12px 0 0">Subtitle terasa kecepatan? Isi angka plus supaya muncul lebih lambat, misalnya 0,5.</p>
     <button id="dlgClose" type="button">Selesai</button>
