@@ -12,14 +12,16 @@ export function planSeq(items, { T, F, titleEnd = 0, titleTr = 0.6, titleTrName 
     const start = k === 0 ? 0 : end - tr;
     const dur = k === 0 && special ? titleEnd + titleTr / 2 : it.dur;
     const m = it.kind === 'photo' ? (it.landscape ? pl++ : po++) : 0;
-    seq.push({ ...it, dur, tr, start, m, first: k === 0 && special, trName: k === 1 && special ? titleTrName : 'fade' });
+    // efek: 'auto' bergantian (landscape geser kanan/kiri, portrait zoom in/out); selain itu sesuai pilihan
+    const effect = it.kind !== 'photo' ? undefined : it.effect && it.effect !== 'auto' ? it.effect : it.landscape ? (m % 2 === 0 ? 'panr' : 'panl') : (m % 2 === 0 ? 'zin' : 'zout');
+    seq.push({ ...it, dur, tr, start, m, effect, first: k === 0 && special, trName: k === 1 && special ? titleTrName : 'fade' });
     end = start + dur;
   }
   return seq;
 }
 
 // seq = hasil planSeq
-export function buildArgs({ W, H, fps, seq, cues, ext, T, logo, subBottomPct, titleBottomPct, zoom, motion, fit = 'crop', bgmExt, bgmVol = 0.15, bgmFade = 2, vcodec = ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '24'], flash = null, sfx = null }) {
+export function buildArgs({ W, H, fps, seq, cues, ext, T, logo, subBottomPct, titleBottomPct, zoom, motion, panCover = 0.8, fit = 'crop', bgmExt, bgmVol = 0.15, bgmFade = 2, vcodec = ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '24'], flash = null, sfx = null }) {
   const n = seq.length, args = [];
   for (const c of seq) {
     if (c.kind === 'photo') args.push('-loop', '1', '-framerate', String(fps), '-t', c.dur.toFixed(3), '-i', c.file);
@@ -32,15 +34,17 @@ export function buildArgs({ W, H, fps, seq, cues, ext, T, logo, subBottomPct, ti
   if (sfx) args.push('-i', `sfx.${sfx.ext}`);
 
   const f = [];
-  const wz = (e) => `scale=w='${W}*(${e})':h='${H}*(${e})':eval=frame:flags=bicubic,crop=${W}:${H}:'(iw-ow)/2':'(ih-oh)/2'`;
+  // zoom dari tengah: posisi crop dihitung dari rumus zoom (bukan iw/ih, yang membeku di ukuran frame pertama)
+  const wz = (e) => `scale=w='${W}*(${e})':h='${H}*(${e})':eval=frame:flags=bicubic,crop=${W}:${H}:'${W}*((${e})-1)/2':'${H}*((${e})-1)/2'`;
   const sw = Math.round(W / 6 / 2) * 2, sh = Math.round(H / 6 / 2) * 2;
 
   seq.forEach((c, k) => {
     if (c.kind === 'photo') {
       const p = `n/${Math.round(c.dur * fps)}`;
-      let chain = `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H}`;
-      if (motion && c.landscape) chain = `crop=${W}:${H}:'(iw-ow)*(${c.m % 2 === 0 ? p : `1-${p}`})':0`;   // geser penuh sisi ke sisi
-      else if (motion) chain = wz(c.m % 2 === 0 ? `1+${zoom}*${p}` : `1+${zoom}*(1-${p})`);               // zoom in / out
+      const base = `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H}`;   // potong tengah, pas 9:16
+      let chain = base;                                                                       // 'static'
+      if (c.effect === 'panr' || c.effect === 'panl') chain = `crop=${W}:${H}:'(iw-ow)*(${((1 - panCover) / 2).toFixed(4)}+${panCover}*(${c.effect === 'panr' ? p : `1-${p}`}))':0`;   // geser penuh sisi ke sisi
+      else if (c.effect === 'zin' || c.effect === 'zout') chain = (c.wide ? base + ',' : '') + wz(c.effect === 'zin' ? `1+${zoom}*${p}` : `1+${zoom}*(1-${p})`);   // zoom in / out
       f.push(`[${k}:v]${chain},setsar=1,format=yuv420p[c${k}]`);
       return;
     }

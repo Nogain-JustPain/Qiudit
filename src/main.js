@@ -212,7 +212,7 @@ export const _debug = { getBaseCues, ED, get manual() { return manual; } };
 
 // ---------- gambar via canvas ----------
 // Portrait: dipotong pas 9:16 (nanti di-zoom). Landscape: tinggi penuh, lebar utuh (nanti digeser dari sisi ke sisi).
-async function photoToJpeg(file, W, H) {
+async function photoToJpeg(file, W, H, wantPan = false) {
   let bmp;
   try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
   catch {
@@ -224,7 +224,8 @@ async function photoToJpeg(file, W, H) {
   }
   const bw = bmp.naturalWidth || bmp.width, bh = bmp.naturalHeight || bmp.height;
   const landscape = bw / bh >= 1.1;
-  const cw = landscape ? Math.min(Math.round((H * bw) / bh / 2) * 2, W * 5) : W;
+  // lebar kanvas: landscape = lebar utuh; portrait yang diminta geser dilebarkan 50% supaya ada ruang bergeser
+  const cw = landscape ? Math.min(Math.round((H * bw) / bh / 2) * 2, W * 5) : wantPan ? Math.round((W * 1.5) / 2) * 2 : W;
   const c = new OffscreenCanvas(cw, H); const x = c.getContext('2d');
   const k = Math.max(cw / bw, H / bh);
   x.drawImage(bmp, (cw - bw * k) / 2, (H - bh * k) / 2, bw * k, bh * k);
@@ -252,10 +253,10 @@ async function cueToPng(text, W) {
   });
   return new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer());
 }
-// Judul: kotak merah Bali Express, teks putih tebal, rata kiri
+// Judul: gaya sama dengan subtitle (satu kotak per baris, lebar mengikuti teks), warna merah Bali Express, teks putih tebal
 async function titleToPng(text, W) {
   const S = CFG.title, size = titleSize(W), font = `700 ${size}px Montserrat`;
-  const padX = Math.round(size * 0.6), padY = Math.round(size * 0.5), lh = Math.round(size * 1.25), x0 = Math.round(W * 0.06);
+  const padX = Math.round(size * 0.5), boxH = Math.round(size * 1.5), gap = Math.round(size * 0.1), x0 = Math.round(W * 0.06);
   const probe = new OffscreenCanvas(10, 10).getContext('2d'); probe.font = font;
   const limit = W * 0.88 - padX * 2, lines = []; let cur = '';
   for (const w of text.split(' ')) {
@@ -263,11 +264,14 @@ async function titleToPng(text, W) {
     if (probe.measureText(tryLine).width > limit && cur) { lines.push(cur); cur = w; } else cur = tryLine;
   }
   lines.push(cur);
-  const boxW = Math.ceil(Math.max(...lines.map((l) => probe.measureText(l).width)) + padX * 2), boxH = lines.length * lh + padY * 2;
-  const c = new OffscreenCanvas(W, boxH); const x = c.getContext('2d');
-  x.fillStyle = S.box; x.beginPath(); x.roundRect(x0, 0, boxW, boxH, size * 0.2); x.fill();
-  x.font = font; x.fillStyle = S.color; x.textAlign = 'left'; x.textBaseline = 'middle';
-  lines.forEach((l, i) => x.fillText(l, x0 + padX, padY + lh * i + lh / 2 + size * 0.04));
+  const H = lines.length * boxH + (lines.length - 1) * gap;
+  const c = new OffscreenCanvas(W, H); const x = c.getContext('2d');
+  x.font = font; x.textAlign = 'left'; x.textBaseline = 'middle';
+  lines.forEach((l, i) => {
+    const bw = Math.ceil(x.measureText(l).width + padX * 2), y = i * (boxH + gap), bx = S.align === 'center' ? Math.round((W - bw) / 2) : x0;
+    x.fillStyle = S.box; x.beginPath(); x.roundRect(bx, y, bw, boxH, size * 0.22); x.fill();
+    x.fillStyle = S.color; x.fillText(l, bx + padX, y + boxH / 2 + size * 0.04);
+  });
   return new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer());
 }
 export { cueToPng, titleToPng };
@@ -352,12 +356,13 @@ async function render() {
       await put(name, f);
       items.push({ kind: 'video', file: name, dur });
     } else {
-      const r = await photoToJpeg(f, W, H);
+      const fx = FX[i] || 'auto', wantPan = fx === 'panr' || fx === 'panl';
+      const r = await photoToJpeg(f, W, H, wantPan);
       await put(`p${i}.jpg`, r.bytes);
-      // foto landscape: durasi menyesuaikan lebar supaya geser penuh tidak terlalu cepat
+      // foto yang digeser: durasi menyesuaikan lebar supaya geser penuh tidak terlalu cepat
       let dur = D;
-      if (motion && r.landscape) dur = Math.min(CFG.panMaxSeconds, Math.max(D, (r.width - W) / (CFG.panSpeedPct * W)));
-      items.push({ kind: 'photo', file: `p${i}.jpg`, dur, landscape: r.landscape });
+      if (wantPan || (fx === 'auto' && motion && r.landscape)) dur = Math.min(CFG.panMaxSeconds, Math.max(D, ((r.width - W) * CFG.panCoverage) / (CFG.panSpeedPct * W)));
+      items.push({ kind: 'photo', file: `p${i}.jpg`, dur, landscape: r.landscape, wide: r.width > W, effect: fx === 'auto' && !motion ? 'static' : fx });
     }
   }
 
@@ -385,7 +390,7 @@ async function render() {
   const flash = useFlash ? { at: titleEnd, attack: CFG.flash.attack, decay: CFG.flash.decay } : null;
   const seq = planSeq(items, { T, F, titleEnd, titleTr: tr.seconds, titleTrName: tr.name });
   const common = { W, H, fps: CFG.fps, seq, cues, ext, T, logo: CFG.logo, subBottomPct: CFG.subtitle.bottomPct, titleBottomPct: CFG.title.bottomPct,
-    zoom: CFG.zoomAmount, motion, fit, flash,
+    zoom: CFG.zoomAmount, motion, panCover: CFG.panCoverage, fit, flash,
     bgmExt, bgmVol: Math.min(1, Math.max(0, (+$('bgmvol').value || 0) / 100)), bgmFade: MUSIC.fadeOutSeconds };
 
   status('Merender di browser... (tab jangan ditutup)');
@@ -399,13 +404,53 @@ async function render() {
   const url = URL.createObjectURL(blob);
   $('out').innerHTML = `<video src="${url}" controls playsinline></video>`;
   $('dl').innerHTML = `<a href="${url}" download="bali-express-video.mp4">Download MP4</a>`;
+  $('dl').querySelector('a').addEventListener('click', () => { if ($('autoclear').value === 'on') setTimeout(resetForm, 600); });
   progress(1); status('Selesai.' + (note ? ' ' + note : ''));
 }
+
+// ---------- kosongkan form setelah download ----------
+function resetForm() {
+  for (const id of ['photos', 'vo', 'srt', 'bgm']) { $(id).value = ''; $(id + 'Name').textContent = 'Belum ada file'; }
+  $('script').value = ''; manual = null;
+  Object.assign(voCache, { key: '', data: null }); Object.assign(wCache, { key: '', words: null });   // lepas memori audio
+  buildFxList(); refreshState();
+  status('Form sudah dikosongkan. Video di atas masih bisa di-download lagi.');
+}
+
+// ---------- gerakan per foto ----------
+const FX = [];   // pilihan gerakan per file (indeks sama dengan urutan file)
+const FX_OPTS = [['auto', 'Otomatis'], ['zin', 'Zoom in'], ['zout', 'Zoom out'], ['panr', 'Geser ke kanan'], ['panl', 'Geser ke kiri'], ['static', 'Diam']];
+let fxUrls = [];
+function buildFxList() {
+  fxUrls.forEach((u) => URL.revokeObjectURL(u)); fxUrls = []; FX.length = 0;
+  const box = $('fxlist'); box.innerHTML = '';
+  const files = [...$('photos').files];
+  if (!files.length) { box.innerHTML = '<p class="hint">Belum ada foto atau video dipilih.</p>'; return; }
+  files.forEach((f, i) => {
+    const row = document.createElement('div'); row.className = 'fxrow';
+    const n = document.createElement('span'); n.className = 'tt'; n.textContent = String(i + 1);
+    const url = URL.createObjectURL(f); fxUrls.push(url);
+    const vid = isVideo(f), th = document.createElement(vid ? 'video' : 'img');
+    th.src = url; if (vid) { th.muted = true; th.preload = 'metadata'; } else th.alt = '';
+    const nm = document.createElement('span'); nm.className = 'fxname'; nm.textContent = f.name; nm.title = f.name;
+    row.append(n, th, nm);
+    if (vid) { const t = document.createElement('span'); t.className = 'hint'; t.textContent = 'Video (tanpa efek)'; row.append(t); }
+    else {
+      const sel = document.createElement('select'); sel.setAttribute('aria-label', `Gerakan foto ${i + 1}`);
+      for (const [v, l] of FX_OPTS) { const o = document.createElement('option'); o.value = v; o.textContent = l; sel.append(o); }
+      sel.onchange = () => { FX[i] = sel.value; };
+      row.append(sel);
+    }
+    box.append(row);
+  });
+}
+buildFxList();
 
 // nama file terpilih
 for (const id of ['photos', 'vo', 'srt', 'bgm']) $(id).onchange = () => {
   const f = [...$(id).files], v = f.filter(isVideo).length;
   $(id + 'Name').textContent = !f.length ? 'Belum ada file' : id === 'photos' ? `${f.length - v} foto, ${v} video` : f[0].name;
+  if (id === 'photos') buildFxList();
 };
 $('go').onclick = async () => {
   $('go').disabled = true; $('out').innerHTML = ''; $('dl').innerHTML = '';

@@ -4,9 +4,10 @@ export default {
   fadeSeconds: 0.5,     // crossfade antar foto
   fps: 25,
   zoomAmount: 0.12,     // foto portrait: seberapa dekat zoom in/out (0.12 = 12%)
+  panCoverage: 0.8,     // geser: hanya menempuh 80% dari jarak geser maksimal (mulai 10%, berhenti 90%), tidak sampai ujung foto
   panSpeedPct: 0.28,    // foto landscape: kecepatan geser (x lebar video per detik)
   panMaxSeconds: 8,     // foto landscape: durasi maksimal supaya satu foto tidak kelamaan
-  title: { size: 52, color: '#ffffff', box: '#e8432a', bottomPct: 0.74 },      // judul di awal (gaya kotak merah)
+  title: { size: 52, color: '#ffffff', box: '#e8432a', bottomPct: 0.74, align: 'left' },   // align: 'left' atau 'center'      // judul di awal (gaya kotak merah)
   flash: { attack: 0.08, decay: 0.45, cutSeconds: 0.12 },                        // flash kamera di akhir judul
   titleTransition: { name: 'slideleft', seconds: 0.6 },                         // transisi dari judul ke isi berita
   logo: { src: '/logo.png', widthPct: 0.26, yPct: 0.08 },   // logo di tengah atas
