@@ -85,6 +85,15 @@ button#tdone:hover{background:#26211b}
 .fxrow select{padding:7px 10px;font-size:13px}
 .fxrow .hint{margin:0;grid-column:4}
 @media(max-width:480px){.fxrow{grid-template-columns:22px 44px minmax(0,1fr)}.fxrow select,.fxrow .hint{grid-column:1/-1}}
+#blist{list-style:none;margin:12px 0 0;padding:0;font-size:12.5px}
+#blist li{display:flex;gap:10px;padding:7px 0;border-top:1px solid var(--line);overflow-wrap:anywhere}
+#blist b{flex:none;max-width:40%}
+#blist span{color:var(--muted)}
+#blist .ok span{color:#2f6b3a}
+#blist .bad span{color:var(--red-dark)}
+#blist .run span{color:var(--ink);font-weight:600}
+#bsum{margin:10px 0 0}
+button.ghost:disabled,button#cfg:disabled{opacity:.55;cursor:default}
 </style>
 </head>
 <body>
@@ -112,6 +121,14 @@ button#tdone:hover{background:#26211b}
     <div class="trowbtn"><button type="button" id="tedit" class="ghost">Atur timing subtitle</button><span id="tstate" class="hint"></span></div>
   </section>
 
+
+  <section class="card">
+    <h2>Render batch dari folder</h2>
+    <p class="hint" id="bhint">Pilih folder induk berisi satu subfolder per berita: foto/video, vo.mp3, naskah.txt (SRT dan musik opsional). Hasil disimpan di subfolder "hasil". Pengaturan berlaku untuk semua video. Gerakan per foto lewat akhiran nama: _zoomin, _zoomout, _kanan, _kiri, _diam.</p>
+    <div class="trowbtn"><button type="button" id="bpick" class="ghost">Pilih folder dan mulai</button><button type="button" id="bstop" class="ghost" hidden>Berhenti</button></div>
+    <p class="hint" id="bsum" role="status"></p>
+    <ul id="blist"></ul>
+  </section>
 
   <div class="actions">
     <button id="cfg" type="button" aria-label="Pengaturan" title="Pengaturan">

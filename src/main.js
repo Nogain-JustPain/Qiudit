@@ -8,6 +8,7 @@ import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import CFG, { MUSIC, WHISPER } from './config.js';
 import { buildArgs, planSeq } from './ffgraph.js';
 import { transcribeWords } from './whisper.js';
+import { initBatch } from './batch.js';
 import { textUnits, analyze, autoCues, fallbackCues, alignToSrt, groupCues } from './align.js';
 
 const $ = (id) => document.getElementById(id);
@@ -406,6 +407,7 @@ async function render() {
   $('dl').innerHTML = `<a href="${url}" download="bali-express-video.mp4">Download MP4</a>`;
   $('dl').querySelector('a').addEventListener('click', () => { if ($('autoclear').value === 'on') setTimeout(resetForm, 600); });
   progress(1); status('Selesai.' + (note ? ' ' + note : ''));
+  return blob;
 }
 
 // ---------- kosongkan form setelah download ----------
@@ -457,6 +459,13 @@ $('go').onclick = async () => {
   try { await render(); } catch (e) { console.error(e); status('Gagal: ' + (e && e.message ? e.message : String(e) || 'error tidak diketahui, buka Console (F12)')); }
   $('go').disabled = false;
 };
+
+// render batch dari folder
+const resetEngine = () => { try { ffmpeg.terminate(); } catch { /* abaikan */ } loaded = false; };
+initBatch({
+  render: async () => { $('out').innerHTML = ''; $('dl').innerHTML = ''; return render(); },
+  resetForm, resetEngine,
+});
 
 // jendela pengaturan
 const dlg = $('dlg');
